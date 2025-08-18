@@ -1,0 +1,28 @@
+<h1>Users</h1>
+
+<form id="user-create" class="form-grid" style="max-width:900px">
+    <label>Email <input class="input" type="email" name="email" required></label>
+    <label>Username <input class="input" type="text" name="username" required></label>
+    <label>Password <input class="input" type="password" name="password" required></label>
+    <label>Role
+        <select class="input" name="role">
+            <option value="user">User</option>
+            <option value="admin">Admin</option>
+        </select>
+    </label>
+    <div class="row-actions"><button class="btn btn-primary">Create User</button></div>
+</form>
+
+<table class="table" id="users-table" style="margin-top:16px">
+    <thead>
+        <tr>
+            <th>Email</th>
+            <th>Username</th>
+            <th>Role</th>
+            <th>Actions</th>
+        </tr>
+    </thead>
+    <tbody></tbody>
+</table>
+
+<script src="/static/js/settings_admin.js"></script>

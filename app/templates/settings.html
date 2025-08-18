@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <title>Settings • Arctic</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+
+<body>
+    <div class="container" style="max-width:900px">
+        <h1>Settings</h1>
+
+        <section style="margin-top:24px;">
+            <h2>Add Library</h2>
+            <form id="lib-form" style="display:grid;grid-template-columns:1fr 140px 1fr auto;gap:8px;align-items:end;">
+                <div>
+                    <label>Name</label>
+                    <input name="name" placeholder="Movies or Kids Movies" required style="width:100%;padding:10px;">
+                </div>
+                <div>
+                    <label>Type</label>
+                    <select name="type" required style="width:100%;padding:10px;">
+                        <option value="movie">Movies</option>
+                        <option value="tv">TV</option>
+                    </select>
+                </div>
+                <div>
+                    <label>Folder path</label>
+                    <input name="path" placeholder="F:\\Movies or /mnt/media/Movies" required
+                        style="width:100%;padding:10px;">
+                </div>
+                <button type="submit" style="padding:10px 14px;">Add</button>
+            </form>
+            <p id="lib-msg" style="margin-top:8px;"></p>
+        </section>
+
+        <section style="margin-top:32px;">
+            <h2>Your Libraries</h2>
+            <div id="lib-list" style="margin-top:10px;"></div>
+        </section>
+    </div>
+
+    <script>
+        async function loadLibs() {
+            const res = await fetch('/api/libraries');
+            const libs = res.ok ? await res.json() : [];
+            const box = document.getElementById('lib-list');
+            if (!libs.length) { box.innerHTML = '<p>No libraries yet.</p>'; return; }
+            box.innerHTML = libs.map(l => `
+        <div class="row" style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid #222;">
+          <div>
+            <div style="font-weight:600">${l.name}</div>
+            <div style="font-size:12px;opacity:.8">${l.type.toUpperCase()} • ${l.path}</div>
+          </div>
+          <div>
+            <code>/library/${l.slug}</code>
+            <button data-id="${l.id}" class="del" style="margin-left:12px;">Delete</button>
+          </div>
+        </div>
+      `).join('');
+            [...box.querySelectorAll('.del')].forEach(btn => {
+                btn.addEventListener('click', async () => {
+                    if (!confirm('Delete this library?')) return;
+                    const r = await fetch('/api/libraries/' + btn.dataset.id, { method: 'DELETE' });
+                    if (r.status === 204) loadLibs();
+                });
+            });
+        }
+
+        document.getElementById('lib-form').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const fd = new FormData(e.target);
+            const payload = Object.fromEntries(fd.entries());
+            const res = await fetch('/api/libraries', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+            document.getElementById('lib-msg').textContent = res.ok ? 'Library added.' : 'Failed to add.';
+            if (res.ok) { e.target.reset(); loadLibs(); }
+        });
+
+        loadLibs();
+    </script>
+</body>
+
+</html>

@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+{% block title %}Home • Arctic{% endblock %}
+{% block content %}
+<div class="home-tabs">
+    <a class="active" href="/">Home</a>
+    <a class="disabled" href="#">Trending</a>
+    <a class="disabled" href="#">Activity</a>
+    <a class="disabled" href="#">Find Friends</a>
+    <a class="disabled" href="#">My Profile</a>
+</div>
+
+<div class="row">
+    <div class="row-head">
+        <h2>Recently Added in Movies</h2>
+        <div class="row-actions">
+            <a class="linkish" href="/movies">See all</a>
+        </div>
+    </div>
+    <button class="row-arrow left" data-row="movies" data-dir="left" aria-label="Scroll left">❮</button>
+    <div class="row-viewport" id="row-movies">
+        <div class="row-track">
+            {% for m in recent_movies %}
+            <a class="poster-card" href="#" title="{{ m.title }}">
+                <div class="poster">
+                    <img loading="lazy" src="{{ m.poster_url or '/static/img/placeholder.png' }}" alt="{{ m.title }}">
+                </div>
+                <div class="meta">
+                    <div class="t">{{ m.title }}</div>
+                    {% if m.year %}<div class="s">{{ m.year }}</div>{% endif %}
+                </div>
+            </a>
+            {% endfor %}
+        </div>
+    </div>
+    <button class="row-arrow right" data-row="movies" data-dir="right" aria-label="Scroll right">❯</button>
+</div>
+
+<div class="row">
+    <div class="row-head">
+        <h2>Recently Added in TV</h2>
+        <div class="row-actions">
+            <a class="linkish" href="/tv">See all</a>
+        </div>
+    </div>
+    <button class="row-arrow left" data-row="tv" data-dir="left" aria-label="Scroll left">❮</button>
+    <div class="row-viewport" id="row-tv">
+        <div class="row-track">
+            {% for s in recent_tv %}
+            <a class="poster-card" href="#" title="{{ s.title }}">
+                <div class="poster">
+                    <img loading="lazy" src="{{ s.poster_url or '/static/img/placeholder.png' }}" alt="{{ s.title }}">
+                </div>
+                <div class="meta">
+                    <div class="t">{{ s.title }}</div>
+                </div>
+            </a>
+            {% endfor %}
+        </div>
+    </div>
+    <button class="row-arrow right" data-row="tv" data-dir="right" aria-label="Scroll right">❯</button>
+</div>
+
+<script src="/static/js/home.js"></script>
+{% endblock %}

@@ -1,0 +1,40 @@
+<h1>Libraries</h1>
+<!-- your existing Libraries form/table block exactly as before -->
+<form id="lib-form"
+    style="display:grid;grid-template-columns:1fr 140px 1fr auto;gap:8px;align-items:end;max-width:900px">
+    <div>
+        <label>Name</label>
+        <input name="name" placeholder="Movies" class="input">
+    </div>
+    <div>
+        <label>Type</label>
+        <select name="type" required class="input">
+            <option value="movie">Movies</option>
+            <option value="tv">TV</option>
+        </select>
+    </div>
+    <div>
+        <label>Folder path</label>
+        <div style="display:flex; gap:8px">
+            <input id="path-input" name="path" required placeholder="F:\Media\Movies" class="input" style="flex:1">
+            <button type="button" id="browse-btn" class="btn btn-secondary">Browse…</button>
+        </div>
+    </div>
+    <button type="submit" class="btn btn-primary">Add</button>
+</form>
+<p id="lib-msg"></p>
+
+<table id="lib-table" class="table" style="margin-top:16px">
+    <thead>
+        <tr>
+            <th>Name</th>
+            <th>Type</th>
+            <th>Path</th>
+            <th>Actions</th>
+        </tr>
+    </thead>
+    <tbody></tbody>
+</table>
+
+<!-- modal kept the same -->
+<div id="fs-modal" class="modal hidden"> ... </div>

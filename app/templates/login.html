@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block title %}Login • {{ BRAND }}{% endblock %}
+
+{% block content %}
+<div class="auth-wrap">
+    <div class="auth-card">
+        <div class="auth-brand">
+            <img src="{{ LOGO_STACKED }}" alt="{{ BRAND }}">
+        </div>
+
+        <h1 class="auth-title">Welcome back</h1>
+        <p class="auth-sub">Sign in to your {{ BRAND }}</p>
+
+        <form id="login-form" class="form-grid" method="post" action="/auth/login">
+            {# optional: <input type="hidden" name="csrf_token" value="{{ csrf_token }}"> #}
+
+            <label for="identifier">Email or Username</label>
+            <input class="input" id="identifier" type="text" name="identifier" autocomplete="username" required>
+
+            <label for="password">Password</label>
+            <input class="input" id="password" type="password" name="password" autocomplete="current-password" required>
+
+            <div class="form-check">
+                <input id="remember" type="checkbox" name="remember" value="1" autocomplete="on">
+                <label for="remember">Remember me</label>
+            </div>
+
+            <div class="row-actions">
+                <button id="login-btn" class="btn btn-primary" type="submit">Sign in</button>
+                <a class="btn btn-ghost" href="/auth/register">Create account</a>
+            </div>
+
+            <div id="login-msg" class="muted" style="margin-top:8px;"></div>
+        </form>
+    </div>
+</div>
+<script src="/static/js/auth.js"></script>
+{% endblock %}

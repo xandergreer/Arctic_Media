@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <title>{% block title %}Arctic Media{% endblock %}</title>
+    <link rel="stylesheet" href="/static/css/base.css?v=9">
+    <link rel="stylesheet" href="/static/css/components.css?v=9">
+    <link rel="stylesheet" href="/static/css/pages.css?v=9">
+</head>
+
+<body>
+    {% if not hide_chrome %}
+    <header class="nav">
+        <div class="nav-inner container">
+            <button id="menu-btn" class="icon-btn" aria-label="Open menu" aria-controls="sidebar" aria-expanded="false">
+                <!-- simple hamburger -->
+                <svg width="22" height="22" viewBox="0 0 24 24" aria-hidden="true">
+                    <path fill="currentColor" d="M3 6h18v2H3zm0 5.5h18v2H3zM3 17h18v2H3z" />
+                </svg>
+            </button>
+
+            <a class="brand" href="/">
+                <img class="brand-word" src="{{ LOGO_COMPACT }}" alt="{{ BRAND }}">
+            </a>
+
+            {% if not hide_nav %}
+            <nav class="cluster">
+                <a href="/settings">Settings</a>
+                <form action="/auth/logout" method="post" style="display:inline">
+                    <button class="btn btn-ghost" type="submit">Logout</button>
+                </form>
+            </nav>
+            {% endif %}
+        </div>
+    </header>
+
+    <!-- Sidebar + backdrop -->
+    <aside id="sidebar" class="sidebar" aria-hidden="true">
+        <div class="sidebar-head">
+            <span class="title">Libraries</span>
+            <button id="sidebar-close" class="icon-btn" aria-label="Close menu">
+                <svg width="20" height="20" viewBox="0 0 24 24">
+                    <path fill="currentColor"
+                        d="M18.3 5.7L12 12l6.3 6.3-1.4 1.4L10.6 13.4 4.3 19.7 2.9 18.3 9.2 12 2.9 5.7 4.3 4.3 10.6 10.6 16.9 4.3z" />
+                </svg>
+            </button>
+        </div>
+        <nav class="sidebar-list" id="sidebar-list">
+            <!-- JS will populate sections here -->
+        </nav>
+    </aside>
+    <div id="sidebar-backdrop"></div>
+    {% endif %}
+
+    <main class="container">
+        {% block content %}{% endblock %}
+    </main>
+
+    <script src="/static/js/main.js"></script>
+</body>
+
+</html>

@@ -1,0 +1,31 @@
+<h1>Remote Access</h1>
+<form id="form-remote" class="form-grid">
+    <label class="check">
+        <input type="checkbox" name="enable_remote_access"> Enable remote access
+    </label>
+
+    <label>Public base URL
+        <input class="input" type="text" name="public_base_url" placeholder="https://your-server.example.com">
+    </label>
+
+    <label>Port
+        <input class="input" type="number" name="port" min="1" max="65535">
+    </label>
+
+    <label class="check">
+        <input type="checkbox" name="upnp"> Automatically configure port (UPnP)
+    </label>
+
+    <label>Allow fallback to insecure connections
+        <select name="allow_insecure_fallback" class="input">
+            <option value="never">Never</option>
+            <option value="ask">Ask</option>
+            <option value="always">Always</option>
+        </select>
+    </label>
+
+    <div class="row-actions">
+        <button type="submit" class="btn btn-primary" id="save-remote">Save Changes</button>
+    </div>
+</form>
+<div id="msg-remote" class="muted"></div>

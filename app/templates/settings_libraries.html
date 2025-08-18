@@ -1,0 +1,90 @@
+<!doctype html>
+<html>
+
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <title>Libraries • Arctic</title>
+    <link rel="stylesheet" href="/static/css/base.css">
+    <link rel="stylesheet" href="/static/css/components.css">
+    <link rel="stylesheet" href="/static/css/pages.css">
+</head>
+
+<body>
+    <div class="container">
+        <h1>Libraries</h1>
+
+        <section>
+            <form id="lib-form"
+                style="display:grid;grid-template-columns:1fr 140px 1fr auto;gap:8px;align-items:end;max-width:900px">
+                <div>
+                    <label>Name</label>
+                    <input name="name" placeholder="Movies" class="input">
+                </div>
+                <div>
+                    <label>Type</label>
+                    <select name="type" required class="input">
+                        <option value="movie">Movies</option>
+                        <option value="tv">TV</option>
+                    </select>
+                </div>
+                <div>
+                    <label>Folder path</label>
+                    <div style="display:flex; gap:8px">
+                        <input id="path-input" name="path" required placeholder="F:\Media\Movies" class="input"
+                            style="flex:1">
+                        <button type="button" id="browse-btn" class="btn btn-secondary">Browse…</button>
+                    </div>
+                </div>
+                <button type="submit" class="btn btn-primary">Add</button>
+            </form>
+            <p id="lib-msg"></p>
+        </section>
+
+        <section style="margin-top:24px">
+            <h2>Your libraries</h2>
+            <table id="lib-table" class="table">
+                <thead>
+                    <tr>
+                        <th style="text-align:left">Name</th>
+                        <th>Type</th>
+                        <th>Path</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody></tbody>
+            </table>
+        </section>
+    </div>
+
+    <!-- Modal -->
+    <div id="fs-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="fs-title">
+        <div class="modal-card" style="max-width:820px; width:100%;">
+            <header class="modal-header"
+                style="display:flex;align-items:center;justify-content:space-between;gap:12px;">
+                <h3 id="fs-title" class="h3">Choose a folder</h3>
+                <button id="fs-close" type="button" class="btn btn-ghost">Close</button>
+            </header>
+
+            <div class="modal-toolbar" style="display:flex;gap:8px;margin:8px 0;">
+                <select id="fs-roots" class="input" style="width:160px"></select>
+                <input id="fs-path" class="input" type="text" placeholder="C:/  or  F:/Media/Movies" style="flex:1;">
+                <button id="fs-go" type="button" class="btn btn-secondary">Go</button>
+            </div>
+
+            <nav id="fs-bc" class="fs-bc" style="margin:6px 0;display:flex;flex-wrap:wrap;gap:4px;"></nav>
+
+            <div id="fs-list" class="fs-list" style="margin-top:6px;max-height:50vh;overflow:auto;">
+                <div class="muted">Loading…</div>
+            </div>
+
+            <footer class="modal-footer" style="margin-top:12px;display:flex;justify-content:flex-end;gap:8px;">
+                <button id="fs-select" type="button" class="btn btn-primary">Select folder</button>
+            </footer>
+        </div>
+    </div>
+
+    <script src="{{ url_for('static', path='js/settings_libraries.js') }}" defer></script>
+</body>
+
+</html>

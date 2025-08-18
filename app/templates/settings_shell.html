@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block title %}Settings • Arctic{% endblock %}
+{% block content %}
+<div class="settings">
+    <aside class="settings-nav">
+        <div class="section">Profile</div>
+        <a href="/settings/general" class="{{ 'active' if panel=='general' else '' }}">General</a>
+
+        <div class="section">Server</div>
+        <a href="/settings/libraries" class="{{ 'active' if panel=='libraries' else '' }}">Libraries</a>
+        <a href="/settings/remote" class="{{ 'active' if panel=='remote' else '' }}">Remote Access</a>
+        <a href="/settings/transcoder" class="{{ 'active' if panel=='transcoder' else '' }}">Transcoder</a>
+
+        <div class="section">Admin</div>
+        <a href="/settings/users" class="{{ 'active' if panel=='users' else '' }}">Users</a>
+        <a href="/settings/tasks" class="{{ 'active' if panel=='tasks' else '' }}">Scheduled Tasks</a>
+    </aside>
+
+    <section class="settings-body">
+        {% if panel == 'general' %}
+        {% include "settings_general.html" %}
+        {% elif panel == 'libraries' %}
+        {% include "settings_libraries_inner.html" %}
+        {% elif panel == 'remote' %}
+        {% include "settings_remote.html" %}
+        {% elif panel == 'transcoder' %}
+        {% include "settings_transcoder.html" %}
+        {% elif panel == 'users' %}
+        {% include "settings_users.html" %}
+        {% elif panel == 'tasks' %}
+        {% include "settings_tasks.html" %}
+        {% endif %}
+    </section>
+</div>
+<script src="/static/js/settings.js"></script>
+<script src="/static/js/settings_libraries.js"></script>
+{% endblock %}

@@ -1,0 +1,36 @@
+<!-- app/templates/register.html -->
+<!doctype html>
+<html>
+
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <title>Register • Arctic</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+
+<body>
+    <div class="container" style="max-width:420px">
+        <h1>Create account</h1>
+        <form method="post" action="/auth/register" class="form-grid">
+            <label>Email
+                <input class="input" type="email" name="email" required>
+            </label>
+            <label>Username
+                <input class="input" type="text" name="username" required>
+            </label>
+            <label>Password
+                <input class="input" type="password" name="password" required>
+            </label>
+            <div class="row-actions">
+                <button class="btn btn-primary" type="submit">Create account</button>
+                <a class="btn btn-ghost" href="/login">Back to sign in</a>
+            </div>
+        </form>
+        <p id="msg"></p>
+        <p><a href="/login">Already have an account? Log in</a></p>
+    </div>
+    <script src="/static/js/auth.js"></script>
+</body>
+
+</html>

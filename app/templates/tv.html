@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block title %}TV • Arctic{% endblock %}
+{% block content %}
+<h1>TV Shows</h1>
+<div class="grid">
+    {% for s in shows %}
+    <a class="card" href="#" title="{{ s.title }}">
+        <img src="{{ s.poster_url or '/static/img/placeholder.png' }}" alt="{{ s.title }}">
+        <div class="card-meta">
+            <div class="title">{{ s.title }}</div>
+        </div>
+    </a>
+    {% else %}
+    <p>No shows yet. Add a TV library and run a scan.</p>
+    {% endfor %}
+</div>
+{% endblock %}

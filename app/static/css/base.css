@@ -1,0 +1,200 @@
+/* ========== Base / Tokens / Reset ========== */
+:root {
+    color-scheme: dark;
+    --bg: #111;
+    --bg-elev: #141414;
+    --bg-card: #181818;
+    --surface: #1b1b1b;
+    --border: #222;
+    --border-strong: #2a2a2a;
+    --text: #eee;
+    --text-dim: #ccc;
+    --muted: #aaa;
+    --link: #8ab4ff;
+    --primary: #2a6bff;
+    --focus: color-mix(in srgb, var(--primary), white 20%);
+    --radius: 12px;
+    --radius-sm: 8px;
+    --btn-pad: 10px 14px;
+    --shadow: 0 12px 40px rgba(0, 0, 0, .45);
+    --brand-word-h: 28px;
+    --nav-pad-y: 8px;
+    --nav-pad-x: 20px;
+    --nav-max: 1700px;
+    --brand-gap: 1px;
+    --brand-nudge-x: -540px;
+    --menu-nudge-x: -8px;
+    --menu-nudge-y: 0px;
+}
+
+@media (max-width: 1100px) {
+    :root {
+        --brand-nudge-x: 0px;
+    }
+}
+
+* {
+    box-sizing: border-box
+}
+
+html,
+body {
+    margin: 0;
+    padding: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: system-ui, Arial, sans-serif;
+    line-height: 1.45
+}
+
+a {
+    color: var(--link);
+    text-decoration: none
+}
+
+a:hover {
+    text-decoration: underline
+}
+
+.container {
+    max-width: 1100px;
+    margin: 40px auto;
+    padding: 0 16px
+}
+
+/* ===== Top nav ===== */
+.nav {
+    position: sticky;
+    top: 0;
+    background: #151515;
+    border-bottom: 1px solid var(--border);
+    z-index: 50;
+}
+
+.nav .container {
+    max-width: var(--nav-max);
+    /* none = full width; try 1200px to re-center */
+    margin: 0 auto;
+    padding-left: var(--nav-pad-x);
+    padding-right: var(--nav-pad-x);
+}
+
+.nav .nav-inner {
+    display: flex;
+    align-items: center;
+    /* vertical centering */
+    justify-content: space-between;
+    gap: var(--brand-gap);
+    padding: var(--nav-pad-y) 0;
+    padding-left: var(--nav-inner-x);
+    padding-right: var(--nav-inner-x);
+    min-height: calc(var(--brand-word-h) + var(--nav-pad-y)*2);
+}
+
+.nav .brand {
+    transform: translateX(var(--brand-nudge-x));
+}
+
+/* links in the header (right side) */
+.nav .cluster {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+}
+
+.nav .cluster a {
+    margin: 0;
+    /* kill the old .nav a margin rule */
+    color: var(--text-dim);
+    text-decoration: none;
+    display: inline-flex;
+    align-items: center;
+    height: 36px;
+    padding: 0 12px;
+    border-radius: 8px;
+}
+
+.nav .cluster a:hover {
+    color: #fff;
+}
+
+.nav .cluster .btn {
+    height: 36px;
+}
+
+/* logout button matches link height */
+
+/* optional underline for active top-level link */
+.nav a.active {
+    color: #fff;
+    position: relative;
+}
+
+.nav a.active::after {
+    content: "";
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: -10px;
+    height: 2px;
+    border-radius: 2px;
+    background: var(--primary);
+}
+
+/* ========== Tables ========== */
+.table {
+    width: 100%;
+    border-collapse: collapse
+}
+
+.table th,
+.table td {
+    border-bottom: 1px solid var(--border);
+    padding: 10px
+}
+
+/* ========== Utilities ========== */
+.muted {
+    color: var(--muted)
+}
+
+.linkish {
+    background: transparent;
+    border: 0;
+    color: var(--link);
+    cursor: pointer
+}
+
+.hidden {
+    display: none !important
+}
+
+.sr-only {
+    position: absolute;
+    clip: rect(0 0 0 0);
+    clip-path: inset(50%);
+    height: 1px;
+    width: 1px;
+    overflow: hidden;
+    white-space: nowrap
+}
+
+/* spacing helpers (optional) */
+.stack>*+* {
+    margin-top: 12px
+}
+
+.cluster {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px
+}
+
+/* align hamburger with brand */
+.nav .nav-inner {
+    gap: 14px;
+}
+
+.icon-btn svg {
+    display: block;
+}

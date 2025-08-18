@@ -1,0 +1,385 @@
+/* ========== Brand / Navbar bits ========== */
+.brand {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-weight: 700;
+    color: #fff
+}
+
+.brand-mark {
+    height: 22px;
+    width: auto;
+    display: block
+}
+
+.brand-text {
+    white-space: nowrap
+}
+
+/* wordmark sizing in navbar */
+.brand-word {
+    height: var(--brand-word-h);
+    width: auto;
+    display: block;
+}
+
+@media (min-width: 1200px) {
+    :root {
+        --brand-word-h: 60px;
+    }
+}
+
+/* ========== Inputs ========== */
+.input,
+select.input {
+    width: 100%;
+    padding: 10px 12px;
+    background: var(--surface);
+    color: #f2f2f2;
+    border: 1px solid var(--border-strong);
+    border-radius: 10px
+}
+
+.input:focus,
+select.input:focus {
+    outline: 2px solid var(--focus);
+    outline-offset: 2px
+}
+
+/* ========== Buttons ========== */
+.btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: var(--btn-pad);
+    border-radius: 10px;
+    border: 1px solid transparent;
+    font-weight: 600;
+    cursor: pointer;
+    transition: filter .15s ease
+}
+
+.btn:focus-visible {
+    outline: 2px solid var(--focus);
+    outline-offset: 2px
+}
+
+.btn-primary {
+    background: var(--primary);
+    color: #fff;
+    border-color: var(--primary)
+}
+
+.btn-primary:hover {
+    filter: brightness(1.1)
+}
+
+.btn-secondary {
+    background: #2b2b2b;
+    color: #fff;
+    border-color: #3a3a3a
+}
+
+.btn-secondary:hover {
+    background: #323232
+}
+
+.btn-ghost {
+    background: transparent;
+    color: #ddd;
+    border: 1px solid #444
+}
+
+.btn-ghost:hover {
+    color: #fff;
+    border-color: #666
+}
+
+/* Disabled + loading */
+.btn[disabled],
+.btn.disabled {
+    opacity: .6;
+    cursor: not-allowed;
+    pointer-events: none
+}
+
+.btn.is-loading {
+    position: relative;
+    padding-right: 34px
+}
+
+.btn.is-loading::after {
+    content: "";
+    width: 16px;
+    height: 16px;
+    border: 2px solid currentColor;
+    border-right-color: transparent;
+    border-radius: 50%;
+    position: absolute;
+    right: 10px;
+    top: 50%;
+    transform: translateY(-50%);
+    animation: spin .6s linear infinite
+}
+
+@keyframes spin {
+    to {
+        transform: translateY(-50%) rotate(360deg)
+    }
+}
+
+/* ========== Forms ========== */
+.form-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 12px;
+    max-width: 900px
+}
+
+.form-grid label {
+    display: flex;
+    flex-direction: column;
+    gap: 6px
+}
+
+.row-actions {
+    grid-column: 1/-1;
+    margin-top: 6px
+}
+
+/* ========== Modal ========== */
+.modal.hidden {
+    display: none
+}
+
+.modal {
+    position: fixed;
+    inset: 0;
+    z-index: 1000;
+    background: rgba(0, 0, 0, .55);
+    display: flex;
+    align-items: center;
+    justify-content: center
+}
+
+.modal-dialog {
+    width: min(800px, 95vw);
+    background: var(--bg-elev);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow)
+}
+
+.modal-head,
+.modal-foot {
+    padding: 12px 14px;
+    border-bottom: 1px solid var(--border)
+}
+
+.modal-foot {
+    border-top: 1px solid var(--border);
+    border-bottom: none;
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px
+}
+
+.modal-body {
+    padding: 12px 14px
+}
+
+.modal-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between
+}
+
+.close-btn {
+    background: transparent;
+    border: 0;
+    color: #bbb;
+    font-size: 20px;
+    cursor: pointer
+}
+
+/* ========== File browser (settings) ========== */
+.fs-top {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 10px
+}
+
+.fs-top select,
+.fs-top input {
+    flex: 1;
+    padding: 8px;
+    background: var(--surface);
+    color: var(--text);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-sm)
+}
+
+.fs-breadcrumb {
+    margin: 8px 0
+}
+
+.fs-list {
+    max-height: 50vh;
+    overflow: auto;
+    background: #101010;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 6px
+}
+
+.fs-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 4px;
+    border-radius: var(--radius-sm)
+}
+
+.fs-row:hover {
+    background: #191919
+}
+
+.fs-row .icon {
+    width: 20px;
+    text-align: center
+}
+
+/* ==== Icon button (hamburger / close) ==== */
+.icon-btn {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: #ddd;
+    height: 36px;
+    width: 36px;
+    border-radius: 8px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.icon-btn:hover {
+    color: #fff;
+    border-color: #666;
+}
+
+/* ==== Sidebar drawer ==== */
+#sidebar-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, .45);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity .18s ease;
+    z-index: 1990;
+}
+
+.sidebar {
+    position: fixed;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    width: 280px;
+    background: #141414;
+    border-right: 1px solid var(--border);
+    transform: translateX(-100%);
+    transition: transform .18s ease;
+    z-index: 2000;
+    display: flex;
+    flex-direction: column;
+}
+
+.sidebar-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px;
+    border-bottom: 1px solid var(--border);
+}
+
+.sidebar-head .title {
+    font-weight: 700;
+    color: #fff;
+}
+
+.sidebar-list {
+    padding: 8px 6px 12px;
+    overflow: auto;
+}
+
+/* Sections */
+.s-section {
+    margin: 10px 0;
+}
+
+.s-title {
+    color: #bbb;
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: .06em;
+    padding: 6px 8px;
+}
+
+.s-server {
+    padding: 6px 8px;
+    color: #ddd;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.s-server .badge {
+    background: #1f4;
+    color: #000;
+    border-radius: 50%;
+    width: 10px;
+    height: 10px;
+    display: none
+}
+
+/* placeholder */
+
+/* Items */
+.s-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 10px;
+    border-radius: 8px;
+    color: #ddd;
+    text-decoration: none;
+}
+
+.s-item:hover {
+    background: #1a1a1a;
+    color: #fff;
+}
+
+.s-item .ic {
+    width: 18px;
+    text-align: center;
+    opacity: .9
+}
+
+/* open state (body gets a class) */
+.sidebar-open .sidebar {
+    transform: translateX(0);
+}
+
+.sidebar-open #sidebar-backdrop {
+    opacity: 1;
+    pointer-events: auto;
+}
+
+/* Desktop: keep it slide-in for now; pin later if you want */
+@media (min-width:1200px) {
+    .sidebar {
+        width: 300px;
+    }
+}

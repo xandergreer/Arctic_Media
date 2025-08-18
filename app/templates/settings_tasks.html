@@ -1,0 +1,32 @@
+<h1>Scheduled Tasks</h1>
+
+<form id="task-create" class="form-grid" style="max-width:900px">
+    <label>Name <input class="input" name="name" required placeholder="Nightly Movie Scan"></label>
+    <label>Type
+        <select class="input" name="job_type">
+            <option value="scan_library">Scan Library</option>
+        </select>
+    </label>
+    <label>Interval (minutes) <input class="input" type="number" name="interval_minutes" value="60" min="1"
+            max="1440"></label>
+    <label>Library
+        <select class="input" name="library_id" id="task-library"></select>
+    </label>
+    <div class="row-actions"><button class="btn btn-primary">Add Task</button></div>
+</form>
+
+<table class="table" id="tasks-table" style="margin-top:16px">
+    <thead>
+        <tr>
+            <th>Name</th>
+            <th>Type</th>
+            <th>Interval</th>
+            <th>Next Run</th>
+            <th>Enabled</th>
+            <th>Actions</th>
+        </tr>
+    </thead>
+    <tbody></tbody>
+</table>
+
+<script src="/static/js/settings_admin.js"></script>

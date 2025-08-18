@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block title %}Movies • Arctic{% endblock %}
+{% block content %}
+<h1>Movies</h1>
+<div class="grid">
+    {% for m in movies %}
+    <a class="card" href="#" title="{{ m.title }}">
+        <img src="{{ m.poster_url or '/static/img/placeholder.png' }}" alt="{{ m.title }}">
+        <div class="card-meta">
+            <div class="title">{{ m.title }}</div>
+            {% if m.year %}<div class="sub">{{ m.year }}</div>{% endif %}
+        </div>
+    </a>
+    {% else %}
+    <p>No movies yet. Add a library and run a scan.</p>
+    {% endfor %}
+</div>
+{% endblock %}

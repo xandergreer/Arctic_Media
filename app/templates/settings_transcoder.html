@@ -1,0 +1,35 @@
+<h1>Transcoder</h1>
+<form id="form-transcoder" class="form-grid">
+    <label>FFmpeg path
+        <input class="input" type="text" name="ffmpeg_path" placeholder="ffmpeg">
+    </label>
+
+    <label>FFprobe path
+        <input class="input" type="text" name="ffprobe_path" placeholder="ffprobe">
+    </label>
+
+    <label>Hardware acceleration
+        <select name="hwaccel" class="input">
+            <option value="auto">Auto</option>
+            <option value="none">None</option>
+            <option value="vaapi">VAAPI</option>
+            <option value="qsv">Intel QSV</option>
+            <option value="nvenc">NVIDIA NVENC</option>
+        </select>
+    </label>
+
+    <label>Max simultaneous transcodes
+        <input class="input" type="number" name="max_transcodes" min="1" max="10">
+    </label>
+
+    <label class="check">
+        <input type="checkbox" name="prefer_remux"> Prefer remux when possible
+    </label>
+
+    <div class="row-actions">
+        <button type="submit" class="btn btn-primary" id="save-transcoder">Save Changes</button>
+    </div>
+</form>
+<div id="msg-transcoder" class="muted"></div>
+
+<script src="/static/js/settings_admin.js"></script>
