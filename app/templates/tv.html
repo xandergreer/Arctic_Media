@@ -1,17 +1,28 @@
-{% extends "base.html" %}
-{% block title %}TV • Arctic{% endblock %}
-{% block content %}
-<h1>TV Shows</h1>
-<div class="grid">
-    {% for s in shows %}
-    <a class="card" href="#" title="{{ s.title }}">
-        <img src="{{ s.poster_url or '/static/img/placeholder.png' }}" alt="{{ s.title }}">
-        <div class="card-meta">
-            <div class="title">{{ s.title }}</div>
-        </div>
-    </a>
-    {% else %}
-    <p>No shows yet. Add a TV library and run a scan.</p>
-    {% endfor %}
+<!-- app/templates/tv.html -->
+{% set title = "TV Shows" %}
+{% include "partials/_header.html" %}
+
+<div class="page">
+    <div class="page-header">
+        <h1>TV Shows</h1>
+        <div class="meta">{{ items|length }} shows</div>
+    </div>
+
+    <div class="media-grid">
+        {% for s in items %}
+        {% set meta = s.extra_json or {} %}
+        {% set poster = meta.get('poster') or meta.get('backdrop') or '/static/img/placeholder.png' %}
+        <a class="media-card" href="/show/{{ s.id }}" title="{{ s.title }}">
+            <div class="poster-wrap">
+                <img loading="lazy" src="{{ poster }}" alt="{{ s.title }}">
+            </div>
+            <div class="meta">
+                <div class="title">{{ s.title }}</div>
+                {% if meta.get('first_air_date') %}<div class="sub">{{ meta['first_air_date'][:4] }}</div>{% endif %}
+            </div>
+        </a>
+        {% endfor %}
+    </div>
 </div>
-{% endblock %}
+
+{% include "partials/_footer.html" %}

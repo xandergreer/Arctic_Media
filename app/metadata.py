@@ -1,99 +1,281 @@
+# app/metadata.py
 from __future__ import annotations
-from typing import Optional, Dict, Any, List
-import httpx
+import time
+import logging
+from typing import Any, Dict, List, Optional, Tuple
+
+import requests
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, update
-from .models import MediaItem, MediaKind
+
+from .models import Library, MediaItem, MediaKind
+from .utils import normalize_sort
+
+log = logging.getLogger("scanner")
 
 TMDB_API = "https://api.themoviedb.org/3"
-IMG_BASE = "https://image.tmdb.org/t/p/"
+IMG_BASE = "https://image.tmdb.org/t/p"   # use /w342, /w500, /original, etc.
 
-class TMDB:
-    def __init__(self, api_key: str):
-        self.api_key = api_key
-        self.client = httpx.AsyncClient(timeout=15)
+def _img(url_part: Optional[str], size: str = "w500") -> Optional[str]:
+    if not url_part:
+        return None
+    return f"{IMG_BASE}/{size}{url_part}"
 
-    async def _get(self, path: str, params: Dict[str, Any] | None = None):
-        p = {"api_key": self.api_key, "language": "en-US"}
-        if params: p.update(params)
-        r = await self.client.get(f"{TMDB_API}{path}", params=p)
+def _headers(api_key: str) -> Dict[str, str]:
+    return {"Authorization": f"Bearer {api_key}"} if api_key.count(".") >= 2 else {}
+
+def _params(api_key: str) -> Dict[str, str]:
+    # supports both v4 bearer (preferred) and v3 ?api_key=
+    return {} if api_key.count(".") >= 2 else {"api_key": api_key}
+
+def _get(api_key: str, path: str, params: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    # tiny rate-limit cushion
+    time.sleep(0.11)
+    try:
+        r = requests.get(f"{TMDB_API}/{path}", headers=_headers(api_key), params={**_params(api_key), **params}, timeout=15)
+        if r.status_code == 429:
+            time.sleep(0.6)
+            r = requests.get(f"{TMDB_API}/{path}", headers=_headers(api_key), params={**_params(api_key), **params}, timeout=15)
         r.raise_for_status()
         return r.json()
+    except Exception as e:
+        log.warning("TMDB GET %s failed: %s", path, e)
+        return None
 
-    async def search_movie(self, title: str, year: Optional[int]):
-        data = await self._get("/search/movie", {"query": title, "year": year, "include_adult": "false"})
-        return (data.get("results") or [None])[0]
+def _pack_common(d: Dict[str, Any]) -> Dict[str, Any]:
+    # Shared fields for movie and tv detail payloads
+    return {
+        "tmdb_id": d.get("id"),
+        "imdb_id": d.get("imdb_id"),  # movie only (None for tv)
+        "overview": (d.get("overview") or "").strip() or None,
+        "genres": [g.get("name") for g in (d.get("genres") or []) if g.get("name")],
+        "rating_vote_average": d.get("vote_average"),
+        "rating_vote_count": d.get("vote_count"),
+        "popularity": d.get("popularity"),
+        "poster": _img(d.get("poster_path"), "w500"),
+        "poster_original": _img(d.get("poster_path"), "original"),
+        "backdrop": _img(d.get("backdrop_path"), "w780"),
+        "backdrop_original": _img(d.get("backdrop_path"), "original"),
+        "homepage": d.get("homepage"),
+        "status": d.get("status"),
+        "tagline": d.get("tagline") or None,
+        "spoken_languages": [sl.get("english_name") or sl.get("name") for sl in (d.get("spoken_languages") or [])],
+        "production_countries": [pc.get("iso_3166_1") for pc in (d.get("production_countries") or []) if pc.get("iso_3166_1")],
+        "production_companies": [pc.get("name") for pc in (d.get("production_companies") or []) if pc.get("name")],
+    }
 
-    async def search_tv(self, title: str, year: Optional[int]):
-        data = await self._get("/search/tv", {"query": title, "first_air_date_year": year})
-        return (data.get("results") or [None])[0]
+def _pack_cast(credits: Dict[str, Any], limit: int = 12) -> Dict[str, Any]:
+    cast = []
+    for c in (credits or {}).get("cast", [])[:limit]:
+        cast.append({
+            "name": c.get("name"),
+            "character": c.get("character"),
+            "profile": _img(c.get("profile_path"), "w185"),
+            "tmdb_id": c.get("id"),
+        })
+    crew = []
+    for c in (credits or {}).get("crew", []):
+        if c.get("job") in {"Director", "Writer", "Screenplay", "Creator"}:
+            crew.append({
+                "name": c.get("name"),
+                "job": c.get("job"),
+                "profile": _img(c.get("profile_path"), "w185"),
+                "tmdb_id": c.get("id"),
+            })
+    # dedupe by name+job
+    seen = set()
+    deduped = []
+    for c in crew:
+        k = (c["name"], c["job"])
+        if k not in seen:
+            seen.add(k)
+            deduped.append(c)
+    return {"cast": cast, "crew": deduped}
 
-    async def movie_details(self, tmdb_id: int):
-        return await self._get(f"/movie/{tmdb_id}")
+async def _search_movie(api_key: str, title: str, year: Optional[int]) -> Optional[int]:
+    payload = _get(api_key, "search/movie", {"query": title, "year": year or ""})
+    for r in (payload or {}).get("results", []):
+        # prefer exact year match when provided, and strong title match
+        if year and r.get("release_date", "").startswith(str(year)):
+            return r.get("id")
+    # fallback to top result
+    return ((payload or {}).get("results") or [None])[0] and (payload["results"][0]["id"])
 
-    async def tv_details(self, tmdb_id: int):
-        return await self._get(f"/tv/{tmdb_id}")
+async def _search_tv(api_key: str, title: str) -> Optional[int]:
+    payload = _get(api_key, "search/tv", {"query": title})
+    return ((payload or {}).get("results") or [None])[0] and (payload["results"][0]["id"])
 
-    @staticmethod
-    def poster_url(path: Optional[str], size: str = "w342") -> Optional[str]:
-        return f"{IMG_BASE}{size}{path}" if path else None
+async def _movie_detail_pack(api_key: str, tmdb_id: int) -> Dict[str, Any]:
+    d = _get(api_key, f"movie/{tmdb_id}", {"append_to_response": "credits,releases"})
+    if not d:
+        return {}
+    out = _pack_common(d)
+    out.update({
+        "media_type": "movie",
+        "title": d.get("title") or d.get("original_title"),
+        "original_title": d.get("original_title"),
+        "release_date": d.get("release_date"),
+        "runtime": d.get("runtime"),
+    })
+    out.update(_pack_cast(d.get("credits") or {}))
+    return out
 
-    @staticmethod
-    def backdrop_url(path: Optional[str], size: str = "w780") -> Optional[str]:
-        return f"{IMG_BASE}{size}{path}" if path else None
+async def _tv_detail_pack(api_key: str, tmdb_id: int) -> Dict[str, Any]:
+    d = _get(api_key, f"tv/{tmdb_id}", {"append_to_response": "aggregate_credits"})
+    if not d:
+        return {}
+    out = _pack_common(d)
+    out.update({
+        "media_type": "tv",
+        "name": d.get("name") or d.get("original_name"),
+        "original_name": d.get("original_name"),
+        "first_air_date": d.get("first_air_date"),
+        "last_air_date": d.get("last_air_date"),
+        "in_production": d.get("in_production"),
+        "number_of_seasons": d.get("number_of_seasons"),
+        "number_of_episodes": d.get("number_of_episodes"),
+        "episode_run_time": d.get("episode_run_time"),
+    })
+    # light cast from aggregate_credits
+    out.update(_pack_cast({"cast": (d.get("aggregate_credits") or {}).get("cast", [])}))
+    return out
 
-    async def close(self):
-        await self.client.aclose()
+async def _episode_detail_pack(api_key: str, show_id: int, season: int, episode: int) -> Dict[str, Any]:
+    d = _get(api_key, f"tv/{show_id}/season/{season}/episode/{episode}", {})
+    if not d:
+        return {}
+    return {
+        "media_type": "episode",
+        "name": d.get("name"),
+        "overview": (d.get("overview") or "").strip() or None,
+        "air_date": d.get("air_date"),
+        "still": _img(d.get("still_path"), "w300"),
+        "still_original": _img(d.get("still_path"), "original"),
+        "vote_average": d.get("vote_average"),
+        "vote_count": d.get("vote_count"),
+        "guest_stars": [
+            {"name": gs.get("name"), "character": gs.get("character"), "profile": _img(gs.get("profile_path"), "w185")}
+            for gs in (d.get("guest_stars") or [])[:10]
+        ],
+    }
 
-async def enrich_library(db: AsyncSession, api_key: str, library_id: str, limit: int = 500) -> int:
-    """Fill in tmdb_id/poster/backdrop/overview/runtime for movies & shows."""
+async def enrich_library(session: AsyncSession, api_key: str, library_id: str, limit: int = 1000) -> Dict[str, int]:
+    """
+    Populate MediaItem.extra_json with TMDB data.
+    Safe to call repeatedly; we won't overwrite existing tmdb_id blocks unless empty.
+    """
     if not api_key:
-        return 0
+        log.info("TMDB_API_KEY not set; skipping enrichment")
+        return {"matched": 0, "skipped": 0, "episodes": 0}
 
-    tmdb = TMDB(api_key)
-    updated = 0
-    try:
-        res = await db.execute(
-            select(MediaItem)
-            .where(MediaItem.library_id == library_id)
-            .where(MediaItem.kind.in_([MediaKind.movie, MediaKind.show]))
-            .order_by(MediaItem.created_at.desc())
-            .limit(limit)
-        )
-        for mi in res.scalars().all():
-            if mi.tmdb_id and mi.poster_url and mi.overview:
-                continue
+    # Get library + items
+    lib = (await session.execute(select(Library).where(Library.id == library_id))).scalars().first()
+    if not lib:
+        return {"matched": 0, "skipped": 0, "episodes": 0}
 
-            hit = await (tmdb.search_movie(mi.title, mi.year) if mi.kind == MediaKind.movie
-                         else tmdb.search_tv(mi.title, mi.year))
+    items = (await session.execute(
+        select(MediaItem).where(MediaItem.library_id == library_id).order_by(MediaItem.created_at.desc())
+    )).scalars().all()
 
-            if not hit:
-                continue
+    matched = skipped = ep_filled = 0
 
-            vals: Dict[str, Any] = {
-                "tmdb_id": hit.get("id"),
-                "poster_url": TMDB.poster_url(hit.get("poster_path")),
-                "backdrop_url": TMDB.backdrop_url(hit.get("backdrop_path")),
-            }
+    # Cache show title -> tmdb_id to speed up episode lookups
+    tv_id_cache: Dict[str, int] = {}
 
-            if mi.kind == MediaKind.movie:
-                det = await tmdb.movie_details(hit["id"])
-                vals["overview"] = det.get("overview")
-                vals["runtime_ms"] = (det.get("runtime") or 0) * 60_000
-                if not mi.year and det.get("release_date"):
-                    vals["year"] = int(det["release_date"][:4])
+    for it in items[:limit]:
+        data = dict(it.extra_json or {})
+        already = bool(data.get("tmdb_id"))
+
+        # movie
+        if it.kind == MediaKind.movie:
+            if not already:
+                tmdb_id = await _search_movie(api_key, it.title, it.year)
+                if not tmdb_id:
+                    skipped += 1
+                    continue
+                data.update(await _movie_detail_pack(api_key, tmdb_id))
+                # optional: override canonical title/year from TMDB to improve sorting
+                if data.get("title"):
+                    it.title = data["title"]
+                    it.sort_title = normalize_sort(it.title)
+                if data.get("release_date") and not it.year:
+                    y = data["release_date"][:4]
+                    if y.isdigit():
+                        it.year = int(y)
+                it.extra_json = data
+                matched += 1
+
+        # tv show / season / episode
+        elif it.kind == MediaKind.show:
+            # cache show tmdb_id
+            if not already:
+                tmdb_id = await _search_tv(api_key, it.title)
+                if not tmdb_id:
+                    skipped += 1
+                    continue
+                data.update(await _tv_detail_pack(api_key, tmdb_id))
+                it.extra_json = data
+                tv_id_cache[it.id] = tmdb_id
+                matched += 1
             else:
-                det = await tmdb.tv_details(hit["id"])
-                vals["overview"] = det.get("overview")
-                runtimes: List[int] = det.get("episode_run_time") or []
-                vals["runtime_ms"] = (min(runtimes) if runtimes else 0) * 60_000
-                if not mi.year and det.get("first_air_date"):
-                    vals["year"] = int(det["first_air_date"][:4])
+                if data.get("tmdb_id"):
+                    tv_id_cache[it.id] = data["tmdb_id"]
 
-            await db.execute(update(MediaItem).where(MediaItem.id == mi.id).values(**vals))
-            updated += 1
+        elif it.kind == MediaKind.season:
+            # seasons get poster via show details; we can stash season_no for episodes
+            # Title is like "Season 01" – keep as-is but add season number to extra_json
+            if "season_number" not in data:
+                try:
+                    data["season_number"] = int((it.title or "").split()[-1])
+                except Exception:
+                    pass
+            it.extra_json = data
 
-        await db.commit()
-        return updated
-    finally:
-        await tmdb.close()
+        elif it.kind == MediaKind.episode:
+            # need parent season -> parent show to know TMDB show id and S/E numbers
+            # We’ll read season/episode from our own episode.extra_json (set in scanner)
+            se = dict(it.extra_json or {})
+            season_no = se.get("season")
+            episode_no = se.get("episode")
+            if not (season_no and episode_no):
+                skipped += 1
+                continue
+
+            # climb to show to find tmdb_id
+            # NOTE: if your models don’t expose relationships here, the UI can still use the still image we fetch.
+            # We’ll try to locate the show MediaItem for tmdb_id by title match.
+            # Simple heuristic: find a show with the same library whose sort_title is a prefix of this episode’s sort_title.
+            if not tv_id_cache:
+                for show in items:
+                    if show.kind == MediaKind.show and (show.extra_json or {}).get("tmdb_id"):
+                        tv_id_cache[show.id] = show.extra_json["tmdb_id"]
+
+            show_tmdb_id = None
+            # best: follow parents—if you have relationships exposed. If not, try title prefix match:
+            for show_id, tmdb_id in tv_id_cache.items():
+                show = next((x for x in items if x.id == show_id), None)
+                if show and show.title and it.title and normalize_sort(show.title) in normalize_sort(it.title):
+                    show_tmdb_id = tmdb_id
+                    break
+            # last resort: search by the library’s show title again using the episode’s stem (coarse)
+            if not show_tmdb_id:
+                # Try to infer show name from episode title (prefix before 'SxxExx')
+                show_tmdb_id = await _search_tv(api_key, it.title.split("S")[0].strip())
+
+            if not show_tmdb_id:
+                skipped += 1
+                continue
+
+            ep_data = await _episode_detail_pack(api_key, show_tmdb_id, int(season_no), int(episode_no))
+            if ep_data:
+                se.update(ep_data)
+                it.extra_json = se
+                ep_filled += 1
+
+        # commit in batches
+        if (matched + ep_filled) % 50 == 0:
+            await session.commit()
+
+    await session.commit()
+    log.info("enrich done: matched=%d skipped=%d episodes=%d", matched, skipped, ep_filled)
+    return {"matched": matched, "skipped": skipped, "episodes": ep_filled}

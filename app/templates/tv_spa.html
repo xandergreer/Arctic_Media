@@ -1,0 +1,26 @@
+{% set title = "TV" %}
+{% include "partials/_header.html" %}
+
+<div class="page" id="tv-app">
+    <div class="page-header">
+        <h1>TV</h1>
+        <div id="crumbs" class="meta"></div>
+    </div>
+
+    <div id="shows-view">
+        <div class="media-grid" id="shows-grid"></div>
+    </div>
+
+    <div id="seasons-view" class="hidden">
+        <div class="page-subheader">
+            <button class="btn" id="back-to-shows">← Back</button>
+            <h2 id="show-title"></h2>
+        </div>
+        <div class="media-row" id="seasons-row"></div>
+        <h3>Episodes</h3>
+        <div class="media-grid" id="episodes-grid"></div>
+    </div>
+</div>
+
+<script defer src="/static/js/tv.js?v=1"></script>
+{% include "partials/_footer.html" %}

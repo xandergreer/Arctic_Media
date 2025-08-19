@@ -1,0 +1,42 @@
+<!-- app/templates/show_detail.html -->
+{% set meta = show.extra_json or {} %}
+{% set poster = meta.get('poster') or '/static/img/placeholder.png' %}
+{% set backdrop = meta.get('backdrop') %}
+{% include "partials/_header.html" %}
+
+<div class="page show-detail">
+    <div class="hero" {% if backdrop %}style="background-image:url('{{ backdrop }}')" {% endif %}>
+        <div class="hero-content">
+            <img class="hero-poster" src="{{ poster }}" alt="{{ show.title }}">
+            <div class="hero-info">
+                <h1>{{ show.title }}</h1>
+                {% if meta.get('genres') %}<div class="genres">{{ meta['genres']|join(', ') }}</div>{% endif %}
+                {% if meta.get('overview') %}<p class="overview">{{ meta['overview'] }}</p>{% endif %}
+                <div class="facts">
+                    {% if meta.get('first_air_date') %}<span>First aired {{ meta['first_air_date'] }}</span>{% endif %}
+                    {% if meta.get('number_of_seasons') %}<span>• {{ meta['number_of_seasons'] }} seasons</span>{% endif
+                    %}
+                    {% if meta.get('number_of_episodes') %}<span>• {{ meta['number_of_episodes'] }} episodes</span>{%
+                    endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <h2>Seasons</h2>
+    <div class="media-row">
+        {% for season in seasons %}
+        <a class="media-card sm" href="/show/{{ show.id }}/season/{{ (season.title.split()[-1])|int }}">
+            <div class="poster-wrap">
+                <!-- No dedicated season poster yet; fall back to show poster -->
+                <img loading="lazy" src="{{ poster }}" alt="{{ season.title }}">
+            </div>
+            <div class="meta">
+                <div class="title">{{ season.title }}</div>
+            </div>
+        </a>
+        {% endfor %}
+    </div>
+</div>
+
+{% include "partials/_footer.html" %}

@@ -2,6 +2,8 @@
 import os
 from pydantic import Field
 from pydantic_settings import BaseSettings
+from dotenv import load_dotenv
+load_dotenv(override=True)
 
 class Settings(BaseSettings):
     FS_BROWSE_ROOTS: str = ""  # comma-separated extra roots to expose, e.g. "D:\\Media,\\\\NAS\\Share,/mnt/media"

@@ -198,3 +198,9 @@ a:hover {
 .icon-btn svg {
     display: block;
 }
+
+.media-card.wide .poster-wrap img {
+    aspect-ratio: 16/9;
+    object-fit: cover;
+    width: 100%;
+}

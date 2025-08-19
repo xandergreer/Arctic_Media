@@ -66,12 +66,28 @@ def is_video_file(path: str) -> bool:
 YEAR_RE = re.compile(r"\b((?:19|20)\d{2})\b")
 SAMPLE_RE = re.compile(r"\b(sample|trailer|teaser|clip|extra|extras)\b", re.I)
 JUNK_RE = re.compile(
-    r"\b(480p|720p|1080p|2160p|4k|uhd|hdr10\+?|hdr|dv|dolby|vision|web[-_. ]?dl|web[-_. ]?rip|"
-    r"bluray|b[dr]rip|brrip|hdtv|x264|x265|h\.?264|hevc|av1|"
+    r"\b(480p|720p|1080p|2160p|4k|uhd|hdr10\+?|hdr|dv|dolby|vision|Ds4K|Dd|web[-_. ]?dl|web[-_. ]?rip|"
+    r"bluray|b[dr]rip|brrip|hdtv|x264|H 264|x265|h\.?264|hevc|av1|"
     r"ddp?\d(\.\d)?|dts(-?hd)?|truehd|atmos|aac|mp3|flac|"
     r"proper|remux|repack|extended|unrated|dc|amzn|nf|hdtc|cam|webrip|webr|webrdl)\b",
     re.I,
 )
+RELEASE_GROUP_RE = re.compile(
+    r"\b(yify|etrg|rarbg|evo|flux|darkflix|ivy|will1869|x0r|aoc|lost|ethel|hallowed|"
+    r"bhdstudio|chivaman|nan0|pir8|lootera|oft|ptv|pmtp|lama|ralphy|okaystopcrying)\b",
+    re.I,
+)
+
+def _strip_release_groups(s: str) -> str:
+    s = RELEASE_GROUP_RE.sub(" ", s)
+    # If anything like "-Group" or "[Group]" sneaks through:
+    s = re.sub(r"[\[\(]\s*[A-Za-z0-9]{3,}\s*[\]\)]$", " ", s)  # trailing [Group] or (Group)
+    s = re.sub(r"[-_. ]+[A-Za-z0-9]{3,}$", " ", s)             # trailing -Group
+    return s
+
+def _strip_stray_trailing_numbers(s: str) -> str:
+    # Remove a lone trailing 0/1 (disc/part markers), but keep real sequels like "Waynes World 2"
+    return re.sub(r"\s+(?:0|1)$", "", s)
 
 SMALL_WORDS = {"and","or","the","a","an","of","in","on","to","for","at","by","from","but","nor"}
 
@@ -94,28 +110,23 @@ def _squash_separators(s: str) -> str:
 
 # ------------- Movie parsing -------------
 def parse_movie_from_path(path: str) -> Optional[Tuple[str, Optional[int]]]:
-    """
-    Returns (nice_title, year) or None to skip (samples/trailers).
-    Only removes the first 4-digit year token and strips common junk tags.
-    """
     base_name = os.path.splitext(os.path.basename(path))[0]
     base = _squash_separators(base_name)
 
-    # Skip samples/trailers
     if SAMPLE_RE.search(base):
         return None
 
-    # Extract 4-digit year (full token)
     year: Optional[int] = None
     m = YEAR_RE.search(base)
     if m:
         year = int(m.group(1))
         base = (base[:m.start()] + " " + base[m.end():]).strip()
 
-    # Remove junk markers (codecs, sources, qualities)
+    # junk → release groups → tidy numbers
     cleaned = JUNK_RE.sub(" ", base)
+    cleaned = _strip_release_groups(cleaned)
+    cleaned = _strip_stray_trailing_numbers(cleaned)
     cleaned = re.sub(r"\s+", " ", cleaned).strip()
-
     if not cleaned:
         return None
 
@@ -139,6 +150,8 @@ def guess_title_year(filename: str) -> Tuple[str, Optional[int]]:
 def clean_title(s: str) -> str:
     base = _squash_separators(s)
     base = JUNK_RE.sub(" ", base)
+    base = _strip_release_groups(base)
+    base = _strip_stray_trailing_numbers(base)
     base = re.sub(r"\s+", " ", base).strip()
     return smart_title(base)
 

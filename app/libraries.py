@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, Request
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
-from sqlalchemy import select
+from sqlalchemy import select, func, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.exc import IntegrityError
 
@@ -120,23 +120,23 @@ async def delete_library(
     await db.commit()
     return {"ok": True}
 
-
 @router.post("/{library_id}/scan")
 async def scan_library_endpoint(
     library_id: str,
-    bg: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
-    admin=Depends(require_admin),
+    admin = Depends(require_admin),
 ):
+    # Ensure library exists and belongs to current admin
     res = await db.execute(
         select(Library).where(Library.id == library_id, Library.owner_user_id == admin.id)
     )
     lib = res.scalars().first()
     if not lib:
         raise HTTPException(status_code=404, detail="Library not found")
-    bg.add_task(scan_library_job, library_id)
-    return {"queued": True}
 
+    # Run scan inline and return stats
+    stats = await scan_library_job(library_id, return_stats=True)
+    return {"ok": True, **stats}
 
 async def trigger_library_scan(db: AsyncSession, library_id: str):
     # Convenience if you ever want to call synchronously
@@ -144,34 +144,77 @@ async def trigger_library_scan(db: AsyncSession, library_id: str):
 
 
 # --------------------------- Worker task --------------------------------
-async def scan_library_job(library_id: str):
-    # new session for background task
+async def scan_library_job(library_id: str, return_stats: bool = False):
+    """
+    Scan a library and index media files. When return_stats=True, returns a dict:
+      {added, updated, skipped, seen, known}
+    """
+    from .database import get_sessionmaker
     Session = get_sessionmaker()
+
+    counters = {"added": 0, "updated": 0, "skipped": 0, "seen": 0, "known": 0}
+
     async with Session() as db:
         lib = (await db.execute(select(Library).where(Library.id == library_id))).scalars().first()
-        if not lib or not os.path.isdir(lib.path):
+        if not lib:
+            if return_stats:
+                return counters
             return
 
+        # Count “known” (files already in DB before scan)
+        counters["known"] = (await db.execute(
+            select(func.count()).select_from(MediaFile)
+            .join(MediaItem, MediaItem.id == MediaFile.media_item_id)
+            .where(MediaItem.library_id == library_id)
+        )).scalar_one()
+
+        if not os.path.isdir(lib.path):
+            print(f"[SCAN] Library path missing or not a dir: {lib.path}")
+            if return_stats:
+                return counters
+            return
+
+        print(f"[SCAN] Starting scan: {lib.name} [{lib.type}] -> {lib.path}")
+
         for root, dirs, files in os.walk(lib.path):
-            rel_root = os.path.relpath(root, lib.path)
-            if rel_root == ".":
-                rel_root = ""
             for fname in files:
                 path = os.path.join(root, fname)
+
+                # Filter to video files
                 if not is_video_file(path):
                     continue
+
+                counters["seen"] += 1
                 try:
                     if lib.type == "movie":
-                        await _index_movie(db, lib.id, path)
+                        added = await _index_movie(db, lib.id, path)
                     else:
-                        await _index_tv(db, lib.id, lib.path, rel_root, path)
-                except Exception as e:
-                    # log and continue
-                    print(f"[SCAN] error for {path}: {e}")
+                        added = await _index_tv(db, lib.id, lib.path, os.path.relpath(root, lib.path), path)
 
-        await enrich_library(db, settings.TMDB_API_KEY, lib.id, limit=1000)
+                    if added:
+                        counters["added"] += 1
+                    else:
+                        counters["skipped"] += 1
+                except Exception as e:
+                    # don’t crash scan
+                    print(f"[SCAN] error indexing {path}: {e}")
+                    counters["skipped"] += 1
+
+        # Optional: metadata enrichment (can be slow). Keep it, but it doesn’t affect counts.
+        try:
+            from .config import settings
+            from .metadata import enrich_library
+            if getattr(settings, "TMDB_API_KEY", ""):
+                await enrich_library(db, settings.TMDB_API_KEY, library_id, limit=1000)
+        except Exception as e:
+            print(f"[SCAN] metadata enrichment error: {e}")
+
         await db.commit()
 
+        print(f"[SCAN] Done: seen={counters['seen']} added={counters['added']} skipped={counters['skipped']} known(before)={counters['known']}")
+
+        if return_stats:
+            return counters
 
 # --------------------------- Index helpers ------------------------------
 async def _get_or_create_media(
@@ -232,34 +275,32 @@ async def _get_or_create_media(
         raise
 
 
-async def _index_movie(db: AsyncSession, library_id: str, path: str):
+async def _index_movie(db: AsyncSession, library_id: str, path: str) -> bool:
     title, year = guess_title_year(path)
     movie = await _get_or_create_media(db, library_id, MediaKind.movie, title, year)
     info = ffprobe_info(path)
-    # dedupe file by path
-    existing = (
-        await db.execute(
-            select(MediaFile).where(MediaFile.media_item_id == movie.id, MediaFile.path == path)
-        )
-    ).scalars().first()
+
+    existing = (await db.execute(
+        select(MediaFile).where(MediaFile.media_item_id == movie.id, MediaFile.path == path)
+    )).scalars().first()
     if existing:
-        return
-    db.add(
-        MediaFile(
-            media_item_id=movie.id,
-            path=path,
-            container=info.get("container"),
-            vcodec=info.get("vcodec"),
-            acodec=info.get("acodec"),
-            width=info.get("width"),
-            height=info.get("height"),
-            bitrate=info.get("bitrate"),
-            size_bytes=os.path.getsize(path) if os.path.exists(path) else None,
-        )
-    )
+        return False
+
+    db.add(MediaFile(
+        media_item_id=movie.id,
+        path=path,
+        container=info.get("container"),
+        vcodec=info.get("vcodec"),
+        acodec=info.get("acodec"),
+        width=info.get("width"),
+        height=info.get("height"),
+        bitrate=info.get("bitrate"),
+        size_bytes=os.path.getsize(path) if os.path.exists(path) else None
+    ))
+    return True
 
 
-async def _index_tv(db: AsyncSession, library_id: str, lib_root: str, rel_root: str, path: str):
+async def _index_tv(db: AsyncSession, library_id: str, lib_root: str, rel_root: str, path: str) -> bool:
     parsed = parse_tv_parts(rel_root, path)
     if not parsed:
         # fallback: treat as movie if we can't parse SxxEyy
@@ -267,56 +308,53 @@ async def _index_tv(db: AsyncSession, library_id: str, lib_root: str, rel_root: 
 
     show_title, season, episode, ep_title_guess = parsed
     show = await _get_or_create_media(db, library_id, MediaKind.show, show_title, None, None)
-    season_item = await _get_or_create_media(
-        db, library_id, MediaKind.season, f"Season {season}", None, show.id
-    )
-    episode_item = await _get_or_create_media(
-        db, library_id, MediaKind.episode, ep_title_guess, None, season_item.id
-    )
+    season_item = await _get_or_create_media(db, library_id, MediaKind.season, f"Season {season}", None, show.id)
+    ep_title = ep_title_guess
+    episode_item = await _get_or_create_media(db, library_id, MediaKind.episode, ep_title, None, season_item.id)
     if not episode_item.extra_json:
         episode_item.extra_json = {"season": season, "episode": episode}
 
     info = ffprobe_info(path)
-    existing = (
-        await db.execute(
-            select(MediaFile).where(MediaFile.media_item_id == episode_item.id, MediaFile.path == path)
-        )
-    ).scalars().first()
+    existing = (await db.execute(
+        select(MediaFile).where(MediaFile.media_item_id == episode_item.id, MediaFile.path == path)
+    )).scalars().first()
     if existing:
-        return
-    db.add(
-        MediaFile(
-            media_item_id=episode_item.id,
-            path=path,
-            container=info.get("container"),
-            vcodec=info.get("vcodec"),
-            acodec=info.get("acodec"),
-            width=info.get("width"),
-            height=info.get("height"),
-            bitrate=info.get("bitrate"),
-            size_bytes=os.path.getsize(path) if os.path.exists(path) else None,
-        )
-    )
+        return False
 
+    db.add(MediaFile(
+        media_item_id=episode_item.id,
+        path=path,
+        container=info.get("container"),
+        vcodec=info.get("vcodec"),
+        acodec=info.get("acodec"),
+        width=info.get("width"),
+        height=info.get("height"),
+        bitrate=info.get("bitrate"),
+        size_bytes=os.path.getsize(path) if os.path.exists(path) else None
+    ))
+    return True
 
 @router.post("/{library_id}/refresh_metadata")
-async def refresh_metadata(
-    library_id: str,
-    bg: BackgroundTasks,
-    db: AsyncSession = Depends(get_db),
-    admin=Depends(require_admin),
-):
-    res = await db.execute(
-        select(Library).where(Library.id == library_id, Library.owner_user_id == admin.id)
-    )
-    lib = res.scalars().first()
+async def refresh_metadata(library_id: str, db: AsyncSession = Depends(get_db), admin = Depends(require_admin)):
+    lib = await db.get(Library, library_id)
     if not lib:
-        raise HTTPException(status_code=404, detail="Library not found")
+        raise HTTPException(404, "Library not found")
+    if not settings.TMDB_API_KEY:
+        raise HTTPException(400, "TMDB_API_KEY not configured")
+    stats = await enrich_library(db, settings.TMDB_API_KEY, library_id, limit=5000)
+    return {"ok": True, "stats": stats}
 
-    async def job():
-        Session = get_sessionmaker()
-        async with Session() as s:
-            await enrich_library(s, settings.TMDB_API_KEY, library_id, limit=5000)
-
-    bg.add_task(job)
-    return {"queued": True}
+@router.post("/{library_id}/cleanup_samples")
+async def cleanup_samples(library_id: str, db: AsyncSession = Depends(get_db), admin = Depends(require_admin)):
+    items = (await db.execute(
+        select(MediaItem.id).where(
+            MediaItem.library_id == library_id,
+            MediaItem.title.ilike("%sample%")
+        )
+    )).scalars().all()
+    if not items:
+        return {"removed": 0}
+    await db.execute(delete(MediaFile).where(MediaFile.media_item_id.in_(items)))
+    await db.execute(delete(MediaItem).where(MediaItem.id.in_(items)))
+    await db.commit()
+    return {"removed": len(items)}

@@ -22,7 +22,8 @@
             {% for m in recent_movies %}
             <a class="poster-card" href="#" title="{{ m.title }}">
                 <div class="poster">
-                    <img loading="lazy" src="{{ m.poster_url or '/static/img/placeholder.png' }}" alt="{{ m.title }}">
+                    {% set meta = m.extra_json or {} %}
+                    <img src="{{ meta.get('poster') or '/static/img/placeholder.png' }}" alt="{{ m.title }}">
                 </div>
                 <div class="meta">
                     <div class="t">{{ m.title }}</div>

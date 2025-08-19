@@ -220,7 +220,7 @@ async def scan_tv_library(session: AsyncSession, library: Library) -> dict:
         # batch commits
         if (added + updated) % 200 == 0:
             await session.commit()
-
+ 
     await session.commit()
     log.info(
     "scan %s [%s]: discovered=%d known=%d added=%d skipped=%d updated=%d",
