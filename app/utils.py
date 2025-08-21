@@ -2,251 +2,343 @@
 from __future__ import annotations
 import os
 import re
-import json
-import shutil
+import hmac
+import base64
+import hashlib
 import secrets
 import subprocess
+import shutil
+import json
 from datetime import datetime, timedelta, timezone
-from typing import Any, Optional, Tuple
+from typing import Optional, Tuple, Any, List
 
 from slugify import slugify as _slugify
 from jose import jwt, JWTError
-from argon2 import PasswordHasher
-from argon2.exceptions import VerifyMismatchError
 
-from .config import settings
+# Bring settings for SECRET_KEY
+try:
+    from .config import settings  # type: ignore
+except Exception:
+    # Fallback for PyInstaller-relative import when package context differs
+    from app.config import settings  # type: ignore
 
-# =========================
-# Auth helpers (Argon2 + JWT)
-# =========================
-_ph = PasswordHasher()  # sane defaults
+# =======================
+# Password utilities
+# =======================
 
-def hash_password(raw: str) -> str:
-    return _ph.hash(raw)
+# Prefer argon2 if available; fallback to pbkdf2_sha256
+try:
+    from argon2 import PasswordHasher  # type: ignore
+    from argon2.exceptions import VerifyMismatchError  # type: ignore
+    _PH = PasswordHasher()
+    _HAS_ARGON2 = True
+except Exception:
+    _PH = None
+    _HAS_ARGON2 = False
 
-def verify_password(raw: str, hashed: str) -> bool:
-    try:
-        _ = _ph.verify(hashed, raw)
-        return True
-    except VerifyMismatchError:
-        return False
+def hash_password(password: str) -> str:
+    """
+    Hash a password using argon2 if available, else PBKDF2-SHA256.
+    Encodings are self-identifying so verify_password can detect algorithm.
+    """
+    if _HAS_ARGON2:
+        return _PH.hash(password)
+    # pbkdf2 fallback
+    salt = secrets.token_hex(16)
+    dk = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt.encode("utf-8"), 200_000)
+    digest_b64 = base64.b64encode(dk).decode("ascii")
+    return f"pbkdf2_sha256${salt}${digest_b64}"
+
+def verify_password(password: str, hashed: str) -> bool:
+    if hashed.startswith("$argon2"):
+        if not _HAS_ARGON2:
+            return False
+        try:
+            return _PH.verify(hashed, password)
+        except Exception:
+            return False
+    if hashed.startswith("pbkdf2_sha256$"):
+        try:
+            _algo, salt, digest_b64 = hashed.split("$", 2)
+            dk = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt.encode("utf-8"), 200_000)
+            calc_b64 = base64.b64encode(dk).decode("ascii")
+            return hmac.compare_digest(calc_b64, digest_b64)
+        except Exception:
+            return False
+    # final fallback (legacy/dev only): constant-time compare to plain text
+    return hmac.compare_digest(hashed, password)
+
+# =======================
+# JWT helpers
+# =======================
 
 ALGO = "HS256"
 
-def create_token(data: dict[str, Any], expires_in: int) -> str:
-    to_encode = data.copy()
+def create_token(payload: dict[str, Any], expires_in: int, *, token_type: str = "access") -> str:
+    """
+    Create a signed JWT. Adds standard 'typ', 'iat', 'exp'.
+    'sub' should be present in payload for user id.
+    """
     now = datetime.now(timezone.utc)
-    expire = now + timedelta(seconds=expires_in)
-    to_encode.update({"exp": expire, "iat": now})
-    return jwt.encode(to_encode, settings.SECRET_KEY, algorithm=ALGO)
+    exp = now + timedelta(seconds=int(expires_in))
+    data = dict(payload)
+    data.setdefault("typ", token_type)
+    data["iat"] = int(now.timestamp())
+    data["exp"] = int(exp.timestamp())
+    return jwt.encode(data, settings.SECRET_KEY, algorithm=ALGO)
 
 def decode_token(token: str) -> Optional[dict[str, Any]]:
+    """
+    Verify and decode a JWT. Returns payload dict or None on failure.
+    """
+    if not token:
+        return None
     try:
-        return jwt.decode(token, settings.SECRET_KEY, algorithms=[ALGO])
+        data = jwt.decode(token, settings.SECRET_KEY, algorithms=[ALGO])
+        return data  # type: ignore[return-value]
     except JWTError:
         return None
 
-def new_csrf() -> str:
-    return secrets.token_urlsafe(32)
-
-# =========================
-# Media helpers
-# =========================
-VIDEO_EXTS = {
-    ".mp4", ".m4v", ".mkv", ".mov", ".avi", ".wmv", ".flv", ".ts", ".m2ts", ".webm"
-}
+# =======================
+# General helpers
+# =======================
 
 def slugify(s: str) -> str:
-    return _slugify(s or "", lowercase=True)
+    return _slugify(s)
+
+VIDEO_EXTS = {".mkv", ".mp4", ".m4v", ".avi", ".mov", ".wmv", ".mpg", ".mpeg"}
 
 def is_video_file(path: str) -> bool:
     return os.path.splitext(path)[1].lower() in VIDEO_EXTS
 
-# Regexes: robust 4-digit year, sample/trailer detect, and junk tags
-YEAR_RE = re.compile(r"\b((?:19|20)\d{2})\b")
-SAMPLE_RE = re.compile(r"\b(sample|trailer|teaser|clip|extra|extras)\b", re.I)
-JUNK_RE = re.compile(
-    r"\b(480p|720p|1080p|2160p|4k|uhd|hdr10\+?|hdr|dv|dolby|vision|Ds4K|Dd|web[-_. ]?dl|web[-_. ]?rip|"
-    r"bluray|b[dr]rip|brrip|hdtv|x264|H 264|x265|h\.?264|hevc|av1|"
-    r"ddp?\d(\.\d)?|dts(-?hd)?|truehd|atmos|aac|mp3|flac|"
-    r"proper|remux|repack|extended|unrated|dc|amzn|nf|hdtc|cam|webrip|webr|webrdl)\b",
-    re.I,
-)
-RELEASE_GROUP_RE = re.compile(
-    r"\b(yify|etrg|rarbg|evo|flux|darkflix|ivy|will1869|x0r|aoc|lost|ethel|hallowed|"
-    r"bhdstudio|chivaman|nan0|pir8|lootera|oft|ptv|pmtp|lama|ralphy|okaystopcrying)\b",
-    re.I,
-)
-
-def _strip_release_groups(s: str) -> str:
-    s = RELEASE_GROUP_RE.sub(" ", s)
-    # If anything like "-Group" or "[Group]" sneaks through:
-    s = re.sub(r"[\[\(]\s*[A-Za-z0-9]{3,}\s*[\]\)]$", " ", s)  # trailing [Group] or (Group)
-    s = re.sub(r"[-_. ]+[A-Za-z0-9]{3,}$", " ", s)             # trailing -Group
-    return s
-
-def _strip_stray_trailing_numbers(s: str) -> str:
-    # Remove a lone trailing 0/1 (disc/part markers), but keep real sequels like "Waynes World 2"
-    return re.sub(r"\s+(?:0|1)$", "", s)
-
-SMALL_WORDS = {"and","or","the","a","an","of","in","on","to","for","at","by","from","but","nor"}
-
-def smart_title(s: str) -> str:
-    parts = (s or "").lower().split()
-    out = []
-    for i, w in enumerate(parts):
-        if w in SMALL_WORDS and i not in (0, len(parts) - 1):
-            out.append(w)
-        else:
-            out.append(w.capitalize())
-    return " ".join(out)
-
+_ARTICLE_RE = re.compile(r"^(the|a|an)\s+", re.I)
 def normalize_sort(title: str) -> str:
-    # lower and strip non-alnum for consistent DB lookups
-    return re.sub(r"\W+", "", title or "").lower()
+    if not title:
+        return ""
+    t = title.strip()
+    t = _ARTICLE_RE.sub("", t).lower()
+    t = re.sub(r"[^\w\s]+", " ", t)
+    t = re.sub(r"\s+", " ", t).strip()
+    return t
 
-def _squash_separators(s: str) -> str:
-    return re.sub(r"[\._\-]+", " ", s).strip()
+# --- CSRF helpers ---------------------------------------------------------
+import base64, secrets, hmac  # (you likely already import hmac/base64 above)
 
-# ------------- Movie parsing -------------
-def parse_movie_from_path(path: str) -> Optional[Tuple[str, Optional[int]]]:
-    base_name = os.path.splitext(os.path.basename(path))[0]
-    base = _squash_separators(base_name)
+def new_csrf(length: int = 32) -> str:
+    """
+    Generate a URL-safe, opaque CSRF token (no server-secret needed).
+    """
+    raw = secrets.token_bytes(length)
+    # urlsafe base64, strip '=' padding for compactness
+    return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
 
-    if SAMPLE_RE.search(base):
-        return None
+def verify_csrf(provided: str, expected: str) -> bool:
+    """
+    Constant-time compare of two CSRF tokens (both as strings).
+    Works with our urlsafe tokens even if padding is lost in transit.
+    """
+    if not provided or not expected:
+        return False
+    # normalize any missing padding so tokens compare correctly
+    def _pad(s: str) -> str:
+        return s + "=" * ((4 - (len(s) % 4)) % 4)
+    try:
+        a = base64.urlsafe_b64decode(_pad(provided).encode("ascii"))
+        b = base64.urlsafe_b64decode(_pad(expected).encode("ascii"))
+        return hmac.compare_digest(a, b)
+    except Exception:
+        # if tokens weren't base64, compare raw strings safely
+        return hmac.compare_digest(str(provided), str(expected))
 
+# Backwards-compat alias some codebases use:
+check_csrf = verify_csrf
+
+# =======================
+# Title parsing for movies/TV
+# =======================
+
+_GROUP_OR_SERVICE = {
+    "hulu","amzn","nf","prime","amazon","tubi","pcok","ptv","pmtp","ds4k",
+    "yify","rarbg","etrg","evo","joy","saon","flux","oft","ivy","lost","lama",
+    "bhdstudio","refraction","pir8","okaystopcrying","hallowed","chivaman",
+    "will1869","ethel","aoc","x0r","nan0","lootera","byndr","collective",
+    "multi","real",
+    "sample","trailer","theatrical","workprint","teaser"
+}
+_BREAK_TOKENS = {
+    "web","webrip","webdl","web-dl","hdtv","hdrip","dvdrip","bdrip","brrip","bluray","blu-ray","remux","uhd",
+    "1080p","2160p","720p","480p","4k","8k",
+    "hdr","dv","dovi","dolby","vision",
+    "x264","x265","h264","h.264","h265","h.265","hevc","avc","av1","vp9","vc1","vc-1",
+    "10bit","8bit",
+    "ac3","eac3","dd","dd5","ddp","dts","dts-hd","ma","truehd","atmos","aac","he-aac","flac","mp3",
+    "proper","repack","internal",
+    "telesync","ts","cam","r5","dcp",
+    "remastered","unrated","extended","directors","director","cut","criterion"
+}
+_SAMPLE_OR_TRAILER = {"sample","trailer","workprint","teaser"}
+
+SEP_RE = re.compile(r"[.\-_\[\](){}/\\]+")
+YEAR_RE = re.compile(r"^(19\d{2}|20\d{2}|210\d)$")
+
+def _tokenize(s: str) -> list[str]:
+    s = SEP_RE.sub(" ", s)
+    s = re.sub(r"\s+", " ", s).strip()
+    return s.split()
+
+def _clean_front_noise(tokens: list[str]) -> list[str]:
+    i = 0
+    while i < len(tokens) and tokens[i].lower() in _GROUP_OR_SERVICE:
+        i += 1
+    return tokens[i:]
+
+def _title_from_tokens(tokens: list[str]) -> Tuple[str, Optional[int]]:
+    if any(t.lower() in _SAMPLE_OR_TRAILER for t in tokens):
+        return ("", None)
+    # find first year
     year: Optional[int] = None
-    m = YEAR_RE.search(base)
-    if m:
-        year = int(m.group(1))
-        base = (base[:m.start()] + " " + base[m.end():]).strip()
+    year_idx: Optional[int] = None
+    for idx, t in enumerate(tokens):
+        m = YEAR_RE.match(t)
+        if m:
+            year = int(m.group(1))
+            year_idx = idx
+            break
+    if year_idx is not None:
+        core = tokens[:year_idx]
+    else:
+        core = []
+        for t in tokens:
+            lt = t.lower()
+            if lt in _BREAK_TOKENS:
+                break
+            core.append(t)
+    core = _clean_front_noise(core)
+    # strip embedded channel patterns like 'DDP 5 1'
+    cleaned: list[str] = []
+    i = 0
+    while i < len(core):
+        nxt3 = " ".join(core[i:i+3]).lower()
+        if any(x in nxt3 for x in ("ddp 5 1","eac3 5 1","ac3 5 1","aac 2 0","truehd 7 1","dts 5 1","dts-hd 5 1")):
+            i += 3
+            continue
+        t = core[i]
+        if t.lower() in _BREAK_TOKENS or t.lower() in _GROUP_OR_SERVICE:
+            i += 1
+            continue
+        cleaned.append(t)
+        i += 1
+    title = " ".join(cleaned).strip()
+    # titlecase with small-word rules
+    small = {"and","or","of","the","a","an","to","in","on","at","for","by"}
+    words = title.split()
+    title = " ".join([w if (i and w.lower() in small) else w.capitalize() for i, w in enumerate(words)])
+    return (title, year)
 
-    # junk → release groups → tidy numbers
-    cleaned = JUNK_RE.sub(" ", base)
-    cleaned = _strip_release_groups(cleaned)
-    cleaned = _strip_stray_trailing_numbers(cleaned)
-    cleaned = re.sub(r"\s+", " ", cleaned).strip()
-    if not cleaned:
+def _choose_best_name(file_name: str, parent_name: str) -> Tuple[str, Optional[int]]:
+    stem = os.path.splitext(file_name)[0]
+    t1, y1 = _title_from_tokens(_tokenize(stem))
+    t2, y2 = _title_from_tokens(_tokenize(parent_name))
+    def score(title: str, year: Optional[int]) -> int:
+        s = 0
+        if year: s += 2
+        s += min(len(title.split()), 5)
+        if title and title.split()[0].lower() in _GROUP_OR_SERVICE:
+            s -= 3
+        return s
+    return (t2, y2) if score(t2, y2) > score(t1, y1) else (t1, y1)
+
+def guess_title_year(path: str) -> Tuple[Optional[str], Optional[int]]:
+    base = os.path.basename(path)
+    parent = os.path.basename(os.path.dirname(path))
+    low = (base + " " + parent).lower()
+    if any(k in low for k in ("[trailer", " trailer", "sample", "workprint", "teaser")):
+        return (None, None)
+    title, year = _choose_best_name(base, parent)
+    if title:
+        title = " ".join([w for w in title.split() if w.lower() not in _GROUP_OR_SERVICE and w.lower() not in _BREAK_TOKENS]).strip()
+    if not title or len(title) < 2:
+        return (None, None)
+    return (title, year)
+
+def parse_movie_from_path(path: str) -> Optional[Tuple[str, Optional[int]]]:
+    t, y = guess_title_year(path)
+    if not t:
         return None
+    return (t, y)
 
-    nice_title = smart_title(cleaned)
-    return (nice_title, year)
-
-# Back-compat: some parts of the app expect this name/signature
-def guess_title_year(filename: str) -> Tuple[str, Optional[int]]:
-    """
-    Best-effort guess of (title, year) from a filename (no directories).
-    Uses 4-digit year only and robust junk stripping. Never returns 2-digit years.
-    """
-    parsed = parse_movie_from_path(filename)
-    if parsed:
-        return parsed
-    # fallback: just prettify the stem
-    stem = _squash_separators(os.path.splitext(os.path.basename(filename))[0])
-    return (smart_title(stem), None)
-
-# Back-compat helper used elsewhere
-def clean_title(s: str) -> str:
-    base = _squash_separators(s)
-    base = JUNK_RE.sub(" ", base)
-    base = _strip_release_groups(base)
-    base = _strip_stray_trailing_numbers(base)
-    base = re.sub(r"\s+", " ", base).strip()
-    return smart_title(base)
-
-# ------------- TV parsing -------------
-_TV_RX = re.compile(r"(?i)\bS(\d{1,2})[ ._-]*E(\d{1,3})\b")
-
-def parse_tv_parts(rel_path: str, filename: str) -> Optional[Tuple[str, int, int, str]]:
-    """
-    Returns (show_title, season, episode, ep_title_guess)
-
-    Heuristic: show title = first folder under the library root (rel_path).
-    We still clean the title and strip junk markers.
-    """
-    rel_parts = [p for p in rel_path.replace("\\", "/").split("/") if p]
-    raw_show = rel_parts[0] if rel_parts else "Unknown Show"
-    show_title = smart_title(JUNK_RE.sub(" ", _squash_separators(raw_show))).strip() or "Unknown Show"
-
-    base = os.path.splitext(os.path.basename(filename))[0]
-    pretty_base = _squash_separators(base)
-
-    m = _TV_RX.search(pretty_base)
+# TV
+_TV_SXXEYY = re.compile(r"(?i)\bS(\d{1,2})E(\d{1,2})\b")
+_TV_ALT   = re.compile(r"(?i)\b(\d{1,2})x(\d{1,2})\b")
+def parse_tv_parts(rel_dir: str, filename: str) -> Optional[Tuple[str, int, int, str]]:
+    pathish = SEP_RE.sub(" ", f"{rel_dir} {filename}")
+    m = _TV_SXXEYY.search(pathish) or _TV_ALT.search(pathish)
     if not m:
         return None
+    if m.re is _TV_SXXEYY:
+        season = int(m.group(1)); episode = int(m.group(2))
+    else:
+        season = int(m.group(1)); episode = int(m.group(2))
+    show_raw = pathish[:m.start()]
+    show_tokens = _tokenize(show_raw)
+    show_tokens = _clean_front_noise(show_tokens)
+    show_title, _ = _title_from_tokens(show_tokens)
+    if not show_title:
+        return None
+    tail_tokens = _tokenize(pathish[m.end():])
+    guess_tokens = []
+    for t in tail_tokens:
+        if t.lower() in _BREAK_TOKENS or t.lower() in _GROUP_OR_SERVICE:
+            break
+        guess_tokens.append(t)
+    ep_guess = " ".join(guess_tokens).strip()
+    return (show_title, season, episode, ep_guess)
 
-    season = int(m.group(1))
-    episode = int(m.group(2))
+# =======================
+# ffprobe (best-effort)
+# =======================
 
-    # Everything after the SxxEyy token as an episode title guess
-    ep_guess = pretty_base[m.end():].strip()
-    ep_guess = JUNK_RE.sub(" ", ep_guess)
-    ep_guess = re.sub(r"\s+", " ", ep_guess).strip()
-    ep_title_guess = smart_title(ep_guess) if ep_guess else f"S{season:02d}E{episode:02d}"
-
-    return (show_title, season, episode, ep_title_guess)
-
-# ------------- ffprobe -------------
 def ffprobe_info(path: str) -> dict:
     """
-    Return a dict:
-      container, vcodec, acodec, width, height, bitrate, duration
-    Falls back to extension-only if ffprobe fails.
+    Attempt to run ffprobe for basic metadata. If unavailable, return minimal info.
     """
-    cmd = [
-        settings.FFPROBE_PATH,
-        "-v", "quiet",
-        "-print_format", "json",
-        "-show_streams",
-        "-show_format",
-        path,
-    ]
     try:
-        out = subprocess.check_output(cmd, stderr=subprocess.STDOUT)
-        data = json.loads(out.decode("utf-8", errors="ignore"))
-
-        info = {
+        # Resolve ffprobe path
+        exe = shutil.which("ffprobe")
+        if not exe:
+            raise FileNotFoundError("ffprobe not found")
+        cmd = [
+            exe, "-v", "error",
+            "-show_entries", "format=bit_rate,duration:stream=index,codec_name,codec_type,width,height",
+            "-of", "json", path,
+        ]
+        out = subprocess.check_output(cmd, stderr=subprocess.STDOUT, timeout=10)
+        data = json.loads(out.decode("utf-8", "ignore"))
+        info: dict[str, Any] = {
             "container": os.path.splitext(path)[1].lstrip(".").lower(),
-            "vcodec": None,
-            "acodec": None,
-            "width": None,
-            "height": None,
-            "bitrate": None,
-            "duration": None,
+            "vcodec": None, "acodec": None,
+            "width": None, "height": None,
+            "bitrate": None, "duration": None,
         }
-
-        fmt = data.get("format") or {}
+        fmt = (data.get("format") or {})
         if "bit_rate" in fmt:
-            try:
-                info["bitrate"] = int(fmt["bit_rate"])
-            except Exception:
-                pass
+            try: info["bitrate"] = int(fmt["bit_rate"])
+            except Exception: pass
         if "duration" in fmt:
-            try:
-                info["duration"] = float(fmt["duration"])
-            except Exception:
-                pass
-
-        streams = data.get("streams") or []
-        for s in streams:
-            ctype = s.get("codec_type")
-            if ctype == "video" and info["vcodec"] is None:
+            try: info["duration"] = float(fmt["duration"])
+            except Exception: pass
+        for s in (data.get("streams") or []):
+            if s.get("codec_type") == "video":
                 info["vcodec"] = s.get("codec_name")
-                info["width"] = s.get("width")
+                info["width"]  = s.get("width")
                 info["height"] = s.get("height")
-            elif ctype == "audio" and info["acodec"] is None:
+            elif s.get("codec_type") == "audio" and not info.get("acodec"):
                 info["acodec"] = s.get("codec_name")
-
         return info
     except Exception:
-        # ffprobe missing or failed; fall back to extension only
         return {
             "container": os.path.splitext(path)[1].lstrip(".").lower(),
-            "vcodec": None,
-            "acodec": None,
-            "width": None,
-            "height": None,
-            "bitrate": None,
-            "duration": None,
+            "vcodec": None, "acodec": None,
+            "width": None, "height": None,
+            "bitrate": None, "duration": None,
         }

@@ -16,7 +16,7 @@ logging.config.dictConfig({
     },
 })
 
-import os, time
+import os, time, secrets
 from fastapi import FastAPI, Request, Depends
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
@@ -40,6 +40,7 @@ from .settings_api import router as settings_api_router
 from .nav_api import router as nav_router
 from .ui_nav import router as ui_nav_router
 from .tv_api import router as tv_api_router
+from .streaming import router as streaming_router
 
 from .models import Library, MediaItem, MediaKind, User
 
@@ -78,14 +79,21 @@ app.add_middleware(
 # Single security/CSP middleware
 @app.middleware("http")
 async def add_security_headers(request: Request, call_next):
+    # Per-request nonce for any inline <script> blocks
+    nonce = secrets.token_urlsafe(16)
+    request.state.csp_nonce = nonce
+
     resp = await call_next(request)
     resp.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
     resp.headers["Content-Security-Policy"] = (
         "default-src 'self' https://cdn.plyr.io https://cdnjs.cloudflare.com https://cdn.jsdelivr.net; "
         "img-src 'self' data: https://image.tmdb.org; "
         "style-src 'self' 'unsafe-inline' https://cdn.plyr.io https://cdnjs.cloudflare.com https://cdn.jsdelivr.net; "
-        "script-src 'self' https://cdn.plyr.io https://cdnjs.cloudflare.com https://cdn.jsdelivr.net; "
-        "media-src 'self' blob:; worker-src 'self' blob:"
+        # Nonce enables inline blocks like <script nonce="{{ request.state.csp_nonce }}">...</script>
+        f"script-src 'self' https://cdn.plyr.io https://cdnjs.cloudflare.com https://cdn.jsdelivr.net 'nonce-{nonce}'; "
+        # Allow Plyr's blank.mp4 fallback (and blobs for MSE)
+        "media-src 'self' blob: https://cdn.plyr.io; "
+        "worker-src 'self' blob:"
     )
     return resp
 
@@ -106,7 +114,6 @@ async def root(request: Request, db: AsyncSession = Depends(get_db)):
             select(func.count()).select_from(User)
         )).scalar_one()
     except Exception:
-        # If the table isn't ready yet (first boot), treat as zero
         user_count = 0
 
     if user_count == 0:
@@ -187,6 +194,7 @@ app.include_router(tasks_api_router)
 app.include_router(nav_router)
 app.include_router(ui_nav_router)
 app.include_router(tv_api_router)
+app.include_router(streaming_router)   # /stream/{file_id} and /stream/{file_id}/file
 
 # --------------------------- Settings shell -----------------------------
 @app.get("/settings", response_class=HTMLResponse)

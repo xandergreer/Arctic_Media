@@ -383,3 +383,136 @@ select.input:focus {
         width: 300px;
     }
 }
+
+/* ---- Movie detail hero ---- */
+.movie-detail .hero {
+    position: relative;
+    background: #111;
+    min-height: 360px;
+    display: grid;
+    align-items: end;
+    padding: 24px 0;
+    background-image: var(--hero);
+    background-size: cover;
+    background-position: center;
+}
+
+.movie-detail .hero__overlay {
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(to bottom, rgba(0, 0, 0, .55), rgba(0, 0, 0, .85));
+}
+
+.movie-detail .hero__inner {
+    position: relative;
+    display: grid;
+    grid-template-columns: 180px 1fr;
+    gap: 20px;
+    padding: 0 24px;
+}
+
+.movie-detail .hero__poster img {
+    width: 180px;
+    height: 270px;
+    object-fit: cover;
+    border-radius: 10px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, .4);
+}
+
+.movie-detail .hero__meta .title {
+    font-size: 28px;
+    margin: 6px 0 6px;
+}
+
+.movie-detail .hero__meta .title .sub {
+    color: var(--muted);
+    font-weight: 400;
+}
+
+.movie-detail .hero__meta .tagline {
+    color: var(--muted);
+    margin-bottom: 8px;
+}
+
+.movie-detail .hero__meta .overview {
+    max-width: 70ch;
+    margin-top: 8px;
+}
+
+.movie-detail .hero .actions {
+    margin-top: 14px;
+    display: flex;
+    gap: 10px;
+}
+
+/* ---- Horizontal strip (cast) ---- */
+.h-strip {
+    display: flex;
+    gap: 14px;
+    overflow-x: auto;
+    padding: 4px 4px 10px;
+    scroll-snap-type: x proximity;
+}
+
+.h-strip::-webkit-scrollbar {
+    height: 8px;
+}
+
+.h-strip::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, .2);
+    border-radius: 8px;
+}
+
+.person-card {
+    width: 112px;
+    flex: 0 0 auto;
+    scroll-snap-align: start;
+}
+
+.person-card__img img {
+    width: 112px;
+    height: 168px;
+    border-radius: 8px;
+    object-fit: cover;
+    background: #1a1a1a;
+}
+
+.person-card__name {
+    font-weight: 600;
+    font-size: 13px;
+    margin-top: 6px;
+}
+
+.person-card__role {
+    font-size: 12px;
+    color: var(--muted);
+}
+
+/* ---- File list ---- */
+.file-list {
+    display: grid;
+    gap: 8px;
+}
+
+.file-row {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 12px;
+    padding: 10px 12px;
+    border-radius: 10px;
+    background: rgba(255, 255, 255, .04);
+}
+
+.file-row:hover {
+    background: rgba(255, 255, 255, .07);
+}
+
+.file-row__name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.file-row__cta {
+    color: var(--link);
+}

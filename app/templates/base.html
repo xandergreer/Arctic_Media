@@ -59,7 +59,8 @@
         {% block content %}{% endblock %}
     </main>
 
-    <script src="/static/js/main.js"></script>
+    <script src="/static/js/main.js" nonce="{{ request.state.csp_nonce }}"></script>
+
 </body>
 
 </html>

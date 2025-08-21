@@ -186,6 +186,7 @@
   ('app.scanner', 'F:\\Arctic_Media\\app\\scanner.py', 'PYMODULE'),
   ('app.schemas', 'F:\\Arctic_Media\\app\\schemas.py', 'PYMODULE'),
   ('app.settings_api', 'F:\\Arctic_Media\\app\\settings_api.py', 'PYMODULE'),
+  ('app.streaming', 'F:\\Arctic_Media\\app\\streaming.py', 'PYMODULE'),
   ('app.tasks_api', 'F:\\Arctic_Media\\app\\tasks_api.py', 'PYMODULE'),
   ('app.tv_api', 'F:\\Arctic_Media\\app\\tv_api.py', 'PYMODULE'),
   ('app.ui_nav', 'F:\\Arctic_Media\\app\\ui_nav.py', 'PYMODULE'),
