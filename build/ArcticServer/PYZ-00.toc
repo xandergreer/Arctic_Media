@@ -184,7 +184,6 @@
   ('app.models', 'F:\\Arctic_Media\\app\\models.py', 'PYMODULE'),
   ('app.nav_api', 'F:\\Arctic_Media\\app\\nav_api.py', 'PYMODULE'),
   ('app.scanner', 'F:\\Arctic_Media\\app\\scanner.py', 'PYMODULE'),
-  ('app.scheduler', 'F:\\Arctic_Media\\app\\scheduler.py', 'PYMODULE'),
   ('app.schemas', 'F:\\Arctic_Media\\app\\schemas.py', 'PYMODULE'),
   ('app.settings_api', 'F:\\Arctic_Media\\app\\settings_api.py', 'PYMODULE'),
   ('app.tasks_api', 'F:\\Arctic_Media\\app\\tasks_api.py', 'PYMODULE'),

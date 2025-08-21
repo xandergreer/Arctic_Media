@@ -16,22 +16,16 @@ logging.config.dictConfig({
     },
 })
 
-# --- stdlib ---
 import os, time
-
-# --- FastAPI / Starlette ---
-from fastapi import FastAPI, Request, Depends, HTTPException, APIRouter
+from fastapi import FastAPI, Request, Depends
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
 from starlette.middleware.cors import CORSMiddleware
-
-# --- DB / models ---
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 
-# --- Project imports ---
 from .config import settings
 from .database import init_db, get_db
 from .auth import router as auth_router
@@ -45,26 +39,17 @@ from .tasks_api import router as tasks_api_router
 from .settings_api import router as settings_api_router
 from .nav_api import router as nav_router
 from .ui_nav import router as ui_nav_router
-from .metadata import enrich_library
 from .tv_api import router as tv_api_router
 
 from .models import Library, MediaItem, MediaKind, User
-from .scanner import scan_movie_library, scan_tv_library
-from .scheduler import start_scheduler
-
-# --- App constants ---
-LOGIN_URL  = getattr(settings, "LOGIN_URL", "/login")
-HOME_URL   = getattr(settings, "HOME_URL", "/home")
 
 # --- App setup ---
 app = FastAPI(title="Arctic Media", version="2.0.0")
-router = APIRouter()
 
 # --- Static & templates ---
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 STATIC_DIR = os.path.join(BASE_DIR, "static")
 TPL_DIR = os.path.join(BASE_DIR, "templates")
-
 os.makedirs(STATIC_DIR, exist_ok=True)
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
@@ -90,23 +75,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# dev no-cache for static assets (avoid ?v= busting)
-@app.middleware("http")
-async def apply_csp_header(request, call_next):
-    resp = await call_next(request)
-    resp.headers["Content-Security-Policy"] = (
-        "default-src 'self' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com https://cdn.plyr.io;"
-        "img-src 'self' data: https://image.tmdb.org;"
-        "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://cdn.plyr.io https://cdnjs.cloudflare.com;"
-        "font-src 'self' https://cdn.jsdelivr.net https://cdn.plyr.io https://cdnjs.cloudflare.com;"
-        "script-src 'self' https://cdn.jsdelivr.net https://cdn.plyr.io https://cdnjs.cloudflare.com;"
-        "media-src 'self' blob:;"
-        "worker-src 'self' blob:;"
-        "connect-src 'self';"
-    )
-    return resp
-
-# Security headers
+# Single security/CSP middleware
 @app.middleware("http")
 async def add_security_headers(request: Request, call_next):
     resp = await call_next(request)
@@ -120,30 +89,35 @@ async def add_security_headers(request: Request, call_next):
     )
     return resp
 
+logging.getLogger("scanner").info("TMDB key present: %s", bool(settings.TMDB_API_KEY))
+
 # --- Startup (DB + scheduler) ---
 @app.on_event("startup")
 async def startup_event():
     await init_db()
-    start_scheduler(app)
 
-# ------------------ PAGES declared BEFORE routers (wins for "/") ------------------
+# ------------------ PAGES ------------------
 
-# Root: unauth → /register on first run, else /login; auth → /home
 @app.get("/", response_class=HTMLResponse)
 async def root(request: Request, db: AsyncSession = Depends(get_db)):
+    # 1) First-run: no users -> /register
+    try:
+        user_count = (await db.execute(
+            select(func.count()).select_from(User)
+        )).scalar_one()
+    except Exception:
+        # If the table isn't ready yet (first boot), treat as zero
+        user_count = 0
+
+    if user_count == 0:
+        return RedirectResponse("/register", status_code=307)
+
+    # 2) Otherwise: check auth cookie
     token = request.cookies.get(ACCESS_COOKIE)
     payload = decode_token(token) if token else None
-
-    if not payload or payload.get("typ") != "access":
-        try:
-            user_count = (await db.execute(
-                select(func.count()).select_from(User)
-            )).scalar_one()
-        except Exception:
-            user_count = 1  # fail-safe: assume existing users
-        return RedirectResponse("/register" if user_count == 0 else "/login", status_code=307)
-
-    return RedirectResponse("/home", status_code=307)
+    if payload and payload.get("typ") == "access":
+        return RedirectResponse("/home", status_code=307)
+    return RedirectResponse("/login", status_code=307)
 
 @app.get("/home", response_class=HTMLResponse)
 async def home(
@@ -193,7 +167,7 @@ async def login_page(request: Request):
 async def register_page(request: Request):
     return templates.TemplateResponse("register.html", {"request": request, "hide_chrome": True})
 
-# Friendly GET shims so visiting API URLs in a browser won’t 405
+# Friendly GET shims
 @app.get("/auth/register", include_in_schema=False)
 async def auth_register_get_redirect():
     return RedirectResponse("/register", status_code=307)
@@ -203,8 +177,6 @@ async def auth_login_get_redirect():
     return RedirectResponse("/login", status_code=307)
 
 # ------------------------------ Routers ---------------------------------
-# (These are included AFTER the root route so "/" above has priority)
-app.include_router(router)
 app.include_router(auth_router, prefix="/auth")
 app.include_router(libraries_router)
 app.include_router(browse_router)
@@ -216,7 +188,7 @@ app.include_router(nav_router)
 app.include_router(ui_nav_router)
 app.include_router(tv_api_router)
 
-# --------------------------- Local endpoints -----------------------------
+# --------------------------- Settings shell -----------------------------
 @app.get("/settings", response_class=HTMLResponse)
 async def settings_root(request: Request, user = Depends(get_current_user)):
     return templates.TemplateResponse("settings_shell.html", {"request": request, "panel": "general"})
@@ -227,8 +199,3 @@ async def settings_panel(panel: str, request: Request, user = Depends(get_curren
     if panel not in allowed:
         panel = "general"
     return templates.TemplateResponse("settings_shell.html", {"request": request, "panel": panel})
-
-# (Optional convenience)
-@app.get("/settings/libraries", include_in_schema=False)
-async def settings_libraries_redirect(user = Depends(get_current_user)):
-    return RedirectResponse("/libraries/manage", status_code=307)

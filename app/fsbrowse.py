@@ -2,135 +2,140 @@
 from __future__ import annotations
 
 import os
-from string import ascii_uppercase
-from typing import List, Literal
+from typing import List, Optional
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
-from .auth import require_admin
+from .auth import get_current_user
 from .config import settings
 
-router = APIRouter(prefix="/fs", tags=["filesystem"])
+router = APIRouter(prefix="/fs", tags=["fs"])
 
-# ---------- models ----------
+# ───────────────────────── Models ─────────────────────────
 
-class FsEntry(BaseModel):
-    name: str
+class FSNode(BaseModel):
     path: str
-    type: Literal["dir", "file"]
-    is_hidden: bool = False
+    name: str
+    is_dir: bool
+    size: Optional[int] = None
 
-# ---------- helpers ----------
+class FSListOut(BaseModel):
+    path: str
+    entries: List[FSNode]
 
-def _is_hidden(name: str) -> bool:
-    # Hide dot/system-ish names; Windows $RECYCLE.BIN, etc.
-    return name.startswith(".") or name.startswith("$")
+# ───────────────────────── Helpers ─────────────────────────
+
+def _split_csv(val: str) -> List[str]:
+    if not val:
+        return []
+    return [p.strip() for p in val.replace(";", ",").split(",") if p.strip()]
 
 def _windows_drives() -> List[str]:
     drives: List[str] = []
-    for letter in ascii_uppercase:
-        root = f"{letter}:\\"
-        if os.path.exists(root):
-            drives.append(root)
+    for c in "ABCDEFGHIJKLMNOPQRSTUVWXYZ":
+        d = f"{c}:\\"
+        if os.path.exists(d):
+            drives.append(d)
     return drives
 
 def _roots() -> List[str]:
-    """Base roots + optional extra roots via FS_BROWSE_ROOTS (comma-separated)."""
-    extras = [r.strip() for r in (settings.FS_BROWSE_ROOTS or "").split(",") if r.strip()]
-    if os.name == "nt":
-        return _windows_drives() + extras
-    return ["/"] + extras
-
-# ---------- endpoints ----------
-
-@router.get("/roots")
-async def fs_roots(_: str = Depends(require_admin)):
     """
-    List available starting points for browsing.
-    Returns: [{ "path": "C:\\", "label": "C:\\" }, ...]
+    Allowed roots based on settings.
+      - If FS_BROWSE_MODE=dev_open  -> expose all drives (Windows) or '/' + HOME (POSIX)
+      - Else if FS_BROWSE_ALLOW/FS_BROWSE_ROOTS set -> those paths
+      - Else:  **Windows:** expose all drives (friendly default)
+               **POSIX:**  expose '/' and HOME
     """
-    roots = _roots()
-    return [{"path": r, "label": r} for r in roots]
+    allow_cfg = settings.FS_BROWSE_ALLOW or getattr(settings, "FS_BROWSE_ROOTS", "")
 
-@router.get("/list")
-async def fs_list(
-    path: str = Query("", description="Absolute path to list. If empty, uses first root."),
-    include_files: bool = Query(False, description="Include files (default false)"),
-    show_hidden: bool = Query(False, description="Include hidden entries"),
-    _: str = Depends(require_admin),
-):
-    """
-    List a directory's contents.
-    Returns:
-      {
-        "path": "<normalized dir>",
-        "parent": "<parent dir or null>",
-        "roots": [ "<root1>", "<root2>", ... ],
-        "entries": [
-          {"name": "...", "path": "...", "type": "dir"|"file", "is_hidden": bool},
-          ...
-        ]
-      }
-    """
-    roots = _roots()
-    if not roots:
-        raise HTTPException(status_code=400, detail="No roots available")
+    dev_open = (settings.FS_BROWSE_MODE or "").lower() == "dev_open"
+    allow_list = [_ for _ in (_split_csv(allow_cfg)) if os.path.isdir(os.path.abspath(_))]
 
-    # Default to the first root when path is empty
-    if not path:
-        path = roots[0]
-
-    # Normalize path (preserve UNC if any)
-    try:
-        norm = os.path.abspath(path)
-    except Exception:
-        norm = path
-
-    if not os.path.exists(norm):
-        raise HTTPException(status_code=400, detail=f"Path does not exist: {norm}")
-    if not os.path.isdir(norm):
-        raise HTTPException(status_code=400, detail=f"Not a directory: {norm}")
-
-    # Determine parent (drive root has no parent on Windows; "/" has none on *nix)
-    parent = None
-    try:
+    if dev_open or not allow_list:
         if os.name == "nt":
-            # "C:\", "D:\" style roots
-            if len(norm) <= 3 and norm[1:3] == ":\\":
-                parent = None
-            else:
-                parent_candidate = os.path.dirname(norm.rstrip("\\/"))
-                parent = parent_candidate if parent_candidate and parent_candidate != norm else None
+            roots = _windows_drives()
+            if not roots:
+                # fallback to current drive root
+                drive = os.path.splitdrive(os.getcwd())[0] or "C:"
+                roots = [f"{drive}\\"]
         else:
-            if norm == "/":
-                parent = None
-            else:
-                parent_candidate = os.path.dirname(norm.rstrip("/"))
-                parent = parent_candidate if parent_candidate and parent_candidate != norm else None
-    except Exception:
-        parent = None
+            roots = ["/"]
+            home = os.path.expanduser("~")
+            if os.path.isdir(home):
+                roots.append(home)
+        # if explicit allow_list exists, use it; otherwise, use the defaults above
+        return allow_list or roots
 
-    # Enumerate entries
-    entries: List[FsEntry] = []
+    return [os.path.abspath(p) for p in allow_list]
+
+def _norm(p: str) -> str:
+    return os.path.normcase(os.path.abspath(p))
+
+def _allowed(path: str, roots: List[str]) -> bool:
+    path_nc = _norm(path)
+    for r in roots:
+        r_nc = _norm(r)
+        try:
+            common = os.path.commonpath([path_nc, r_nc])
+        except Exception:
+            # different drive letters on Windows
+            continue
+        if common == r_nc:
+            return True
+    return False
+
+def _list_dir(path: str, include_files: bool, include_dirs: bool, show_hidden: bool) -> List[FSNode]:
     try:
-        with os.scandir(norm) as it:
-            for e in it:
-                hidden = _is_hidden(e.name)
-                if not show_hidden and hidden:
-                    continue
-                if e.is_dir(follow_symlinks=False):
-                    entries.append(FsEntry(name=e.name, path=os.path.join(norm, e.name), type="dir", is_hidden=hidden))
-                elif include_files and e.is_file(follow_symlinks=False):
-                    entries.append(FsEntry(name=e.name, path=os.path.join(norm, e.name), type="file", is_hidden=hidden))
+        names = sorted(os.listdir(path), key=lambda n: n.lower())
     except PermissionError:
         raise HTTPException(status_code=403, detail="Permission denied")
 
-    # Sort: directories first, then files, alpha by name
-    entries.sort(key=lambda x: (x.type != "dir", x.name.lower()))
+    entries: List[FSNode] = []
+    for name in names:
+        if not show_hidden and name.startswith("."):
+            continue
+        full = os.path.join(path, name)
+        try:
+            is_dir = os.path.isdir(full)
+            if (is_dir and not include_dirs) or ((not is_dir) and not include_files):
+                continue
+            size = None if is_dir else os.path.getsize(full)
+            entries.append(FSNode(path=os.path.abspath(full), name=name, is_dir=is_dir, size=size))
+        except OSError:
+            continue
+    return entries
 
-    return {
-        "path": norm,
-        "parent": parent,
-        "roots": roots,
-        "entries": [e.model_dump() for e in entries],
-    }
+# ───────────────────────── Routes ─────────────────────────
+
+@router.get("/roots", response_model=List[FSNode])
+async def fs_roots(user = Depends(get_current_user)):
+    return [FSNode(path=r, name=r, is_dir=True) for r in _roots()]
+
+@router.get("/ls", response_model=FSListOut)
+async def fs_ls(
+    path: str = Query(..., description="Absolute path under an allowed root"),
+    include_files: bool = Query(True),
+    include_dirs: bool = Query(True),
+    show_hidden: bool = Query(False),
+    user = Depends(get_current_user),
+):
+    roots = _roots()
+    if not _allowed(path, roots):
+        raise HTTPException(status_code=403, detail="Path not allowed")
+    if not os.path.isdir(path):
+        raise HTTPException(status_code=404, detail="Directory not found")
+
+    entries = _list_dir(path, include_files=include_files, include_dirs=include_dirs, show_hidden=show_hidden)
+    return FSListOut(path=os.path.abspath(path), entries=entries)
+
+# Legacy endpoint kept for UI compatibility
+@router.get("/list", response_model=FSListOut)
+async def fs_list_legacy(
+    path: str = Query(..., description="Absolute path under an allowed root"),
+    include_files: bool = Query(True),
+    include_dirs: bool = Query(True),
+    show_hidden: bool = Query(False),
+    user = Depends(get_current_user),
+):
+    return await fs_ls(path=path, include_files=include_files, include_dirs=include_dirs, show_hidden=show_hidden, user=user)

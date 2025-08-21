@@ -2,7 +2,7 @@
 from __future__ import annotations
 import time
 import logging
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, Optional
 
 import requests
 from sqlalchemy import select
@@ -95,10 +95,8 @@ def _pack_cast(credits: Dict[str, Any], limit: int = 12) -> Dict[str, Any]:
 async def _search_movie(api_key: str, title: str, year: Optional[int]) -> Optional[int]:
     payload = _get(api_key, "search/movie", {"query": title, "year": year or ""})
     for r in (payload or {}).get("results", []):
-        # prefer exact year match when provided, and strong title match
         if year and r.get("release_date", "").startswith(str(year)):
             return r.get("id")
-    # fallback to top result
     return ((payload or {}).get("results") or [None])[0] and (payload["results"][0]["id"])
 
 async def _search_tv(api_key: str, title: str) -> Optional[int]:
@@ -136,7 +134,6 @@ async def _tv_detail_pack(api_key: str, tmdb_id: int) -> Dict[str, Any]:
         "number_of_episodes": d.get("number_of_episodes"),
         "episode_run_time": d.get("episode_run_time"),
     })
-    # light cast from aggregate_credits
     out.update(_pack_cast({"cast": (d.get("aggregate_credits") or {}).get("cast", [])}))
     return out
 
@@ -160,15 +157,11 @@ async def _episode_detail_pack(api_key: str, show_id: int, season: int, episode:
     }
 
 async def enrich_library(session: AsyncSession, api_key: str, library_id: str, limit: int = 1000) -> Dict[str, int]:
-    """
-    Populate MediaItem.extra_json with TMDB data.
-    Safe to call repeatedly; we won't overwrite existing tmdb_id blocks unless empty.
-    """
+    """Populate MediaItem.extra_json (and poster/backdrop columns). Safe to re-run."""
     if not api_key:
         log.info("TMDB_API_KEY not set; skipping enrichment")
         return {"matched": 0, "skipped": 0, "episodes": 0}
 
-    # Get library + items
     lib = (await session.execute(select(Library).where(Library.id == library_id))).scalars().first()
     if not lib:
         return {"matched": 0, "skipped": 0, "episodes": 0}
@@ -178,15 +171,13 @@ async def enrich_library(session: AsyncSession, api_key: str, library_id: str, l
     )).scalars().all()
 
     matched = skipped = ep_filled = 0
-
-    # Cache show title -> tmdb_id to speed up episode lookups
     tv_id_cache: Dict[str, int] = {}
 
     for it in items[:limit]:
         data = dict(it.extra_json or {})
         already = bool(data.get("tmdb_id"))
 
-        # movie
+        # Movies
         if it.kind == MediaKind.movie:
             if not already:
                 tmdb_id = await _search_movie(api_key, it.title, it.year)
@@ -194,7 +185,6 @@ async def enrich_library(session: AsyncSession, api_key: str, library_id: str, l
                     skipped += 1
                     continue
                 data.update(await _movie_detail_pack(api_key, tmdb_id))
-                # optional: override canonical title/year from TMDB to improve sorting
                 if data.get("title"):
                     it.title = data["title"]
                     it.sort_title = normalize_sort(it.title)
@@ -204,26 +194,30 @@ async def enrich_library(session: AsyncSession, api_key: str, library_id: str, l
                         it.year = int(y)
                 it.extra_json = data
                 matched += 1
+            if data.get("poster") and not it.poster_url:
+                it.poster_url = data["poster"]
+            if data.get("backdrop") and not it.backdrop_url:
+                it.backdrop_url = data["backdrop"]
 
-        # tv show / season / episode
+        # Shows
         elif it.kind == MediaKind.show:
-            # cache show tmdb_id
-            if not already:
+            tmdb_id = data.get("tmdb_id") if already else None
+            if not tmdb_id:
                 tmdb_id = await _search_tv(api_key, it.title)
                 if not tmdb_id:
                     skipped += 1
                     continue
                 data.update(await _tv_detail_pack(api_key, tmdb_id))
                 it.extra_json = data
-                tv_id_cache[it.id] = tmdb_id
                 matched += 1
-            else:
-                if data.get("tmdb_id"):
-                    tv_id_cache[it.id] = data["tmdb_id"]
+            tv_id_cache[it.id] = tmdb_id
+            if data.get("poster") and not it.poster_url:
+                it.poster_url = data["poster"]
+            if data.get("backdrop") and not it.backdrop_url:
+                it.backdrop_url = data["backdrop"]
 
+        # Seasons
         elif it.kind == MediaKind.season:
-            # seasons get poster via show details; we can stash season_no for episodes
-            # Title is like "Season 01" – keep as-is but add season number to extra_json
             if "season_number" not in data:
                 try:
                     data["season_number"] = int((it.title or "").split()[-1])
@@ -231,9 +225,8 @@ async def enrich_library(session: AsyncSession, api_key: str, library_id: str, l
                     pass
             it.extra_json = data
 
+        # Episodes
         elif it.kind == MediaKind.episode:
-            # need parent season -> parent show to know TMDB show id and S/E numbers
-            # We’ll read season/episode from our own episode.extra_json (set in scanner)
             se = dict(it.extra_json or {})
             season_no = se.get("season")
             episode_no = se.get("episode")
@@ -241,27 +234,19 @@ async def enrich_library(session: AsyncSession, api_key: str, library_id: str, l
                 skipped += 1
                 continue
 
-            # climb to show to find tmdb_id
-            # NOTE: if your models don’t expose relationships here, the UI can still use the still image we fetch.
-            # We’ll try to locate the show MediaItem for tmdb_id by title match.
-            # Simple heuristic: find a show with the same library whose sort_title is a prefix of this episode’s sort_title.
             if not tv_id_cache:
                 for show in items:
                     if show.kind == MediaKind.show and (show.extra_json or {}).get("tmdb_id"):
                         tv_id_cache[show.id] = show.extra_json["tmdb_id"]
 
             show_tmdb_id = None
-            # best: follow parents—if you have relationships exposed. If not, try title prefix match:
-            for show_id, tmdb_id in tv_id_cache.items():
+            for show_id, s_tmdb in tv_id_cache.items():
                 show = next((x for x in items if x.id == show_id), None)
                 if show and show.title and it.title and normalize_sort(show.title) in normalize_sort(it.title):
-                    show_tmdb_id = tmdb_id
+                    show_tmdb_id = s_tmdb
                     break
-            # last resort: search by the library’s show title again using the episode’s stem (coarse)
             if not show_tmdb_id:
-                # Try to infer show name from episode title (prefix before 'SxxExx')
                 show_tmdb_id = await _search_tv(api_key, it.title.split("S")[0].strip())
-
             if not show_tmdb_id:
                 skipped += 1
                 continue
@@ -272,7 +257,6 @@ async def enrich_library(session: AsyncSession, api_key: str, library_id: str, l
                 it.extra_json = se
                 ep_filled += 1
 
-        # commit in batches
         if (matched + ep_filled) % 50 == 0:
             await session.commit()
 

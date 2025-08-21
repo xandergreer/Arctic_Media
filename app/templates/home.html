@@ -20,10 +20,11 @@
     <div class="row-viewport" id="row-movies">
         <div class="row-track">
             {% for m in recent_movies %}
-            <a class="poster-card" href="#" title="{{ m.title }}">
+            <a class="poster-card" href="/movie/{{ m.id }}" title="{{ m.title }}">
                 <div class="poster">
                     {% set meta = m.extra_json or {} %}
-                    <img src="{{ meta.get('poster') or '/static/img/placeholder.png' }}" alt="{{ m.title }}">
+                    <img src="{{ meta.get('poster') or m.poster_url or '/static/img/placeholder.png' }}"
+                        alt="{{ m.title }}">
                 </div>
                 <div class="meta">
                     <div class="t">{{ m.title }}</div>
@@ -49,7 +50,9 @@
             {% for s in recent_tv %}
             <a class="poster-card" href="#" title="{{ s.title }}">
                 <div class="poster">
-                    <img loading="lazy" src="{{ s.poster_url or '/static/img/placeholder.png' }}" alt="{{ s.title }}">
+                    {% set meta = s.extra_json or {} %}
+                    <img loading="lazy" src="{{ meta.get('poster') or s.poster_url or '/static/img/placeholder.png' }}"
+                        alt="{{ s.title }}">
                 </div>
                 <div class="meta">
                     <div class="t">{{ s.title }}</div>

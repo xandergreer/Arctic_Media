@@ -3,24 +3,27 @@ import os
 from pydantic import Field
 from pydantic_settings import BaseSettings
 from dotenv import load_dotenv
+
 load_dotenv(override=True)
 
 class Settings(BaseSettings):
-    FS_BROWSE_ROOTS: str = ""  # comma-separated extra roots to expose, e.g. "D:\\Media,\\\\NAS\\Share,/mnt/media"
+    # branding
     BRAND_NAME: str = "Arctic Media Server"
-    # Hardened file browser:
-    #   - mode: "allowlist" (recommended) or "dev_open"
-    FS_BROWSE_MODE: str = "allowlist"
-    # Comma-separated absolute paths that are browseable roots (required in allowlist mode)
-    FS_BROWSE_ALLOW: str = ""
-    # Optional comma-separated absolute paths to always deny (take precedence)
-    FS_BROWSE_DENY: str = ""
     APP_NAME: str = "Arctic Media"
+
+    # file browser
+    FS_BROWSE_MODE: str = "allowlist"  # "allowlist" | "dev_open"
+    FS_BROWSE_ALLOW: str = ""          # comma/semicolon-separated absolute paths
+    # Back-compat with older code that referenced FS_BROWSE_ROOTS
+    FS_BROWSE_ROOTS: str = ""          # alias of FS_BROWSE_ALLOW
+
+    # env / debug
     ENV: str = Field(default="dev", description="dev|prod")
     DEBUG: bool = False
 
     # crypto and session
     SECRET_KEY: str = Field(default_factory=lambda: os.urandom(32).hex())
+    COOKIE_SECURE: bool = False  # set True behind TLS
 
     # database
     DATABASE_URL: str = Field(
@@ -45,9 +48,5 @@ class Settings(BaseSettings):
     class Config:
         env_file = ".env"
         extra = "ignore"
-    
-    FS_BROWSE_ROOTS: str = ""  # comma-separated extra roots to expose, e.g. "D:\\Media,\\\\NAS\\Share,/mnt/media"
-    BRAND_NAME: str = "Arctic Media Server"
 
 settings = Settings()
-
