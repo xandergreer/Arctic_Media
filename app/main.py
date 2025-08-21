@@ -32,7 +32,7 @@ from .auth import router as auth_router
 from .auth import get_current_user, ACCESS_COOKIE
 from .utils import decode_token
 from .libraries import router as libraries_router
-from .browse import router as browse_router
+# from .browse import router as browse_router   # ❌ avoid route collisions
 from .fsbrowse import router as fs_router
 from .admin_users import router as admin_users_router
 from .tasks_api import router as tasks_api_router
@@ -42,7 +42,7 @@ from .ui_nav import router as ui_nav_router
 from .tv_api import router as tv_api_router
 from .streaming import router as streaming_router
 
-from .models import Library, MediaItem, MediaKind, User
+from .models import Library, MediaItem, MediaKind, User, MediaFile
 
 # --- App setup ---
 app = FastAPI(title="Arctic Media", version="2.0.0")
@@ -79,19 +79,15 @@ app.add_middleware(
 # Single security/CSP middleware
 @app.middleware("http")
 async def add_security_headers(request: Request, call_next):
-    # Per-request nonce for any inline <script> blocks
     nonce = secrets.token_urlsafe(16)
     request.state.csp_nonce = nonce
-
     resp = await call_next(request)
     resp.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
     resp.headers["Content-Security-Policy"] = (
         "default-src 'self' https://cdn.plyr.io https://cdnjs.cloudflare.com https://cdn.jsdelivr.net; "
         "img-src 'self' data: https://image.tmdb.org; "
         "style-src 'self' 'unsafe-inline' https://cdn.plyr.io https://cdnjs.cloudflare.com https://cdn.jsdelivr.net; "
-        # Nonce enables inline blocks like <script nonce="{{ request.state.csp_nonce }}">...</script>
         f"script-src 'self' https://cdn.plyr.io https://cdnjs.cloudflare.com https://cdn.jsdelivr.net 'nonce-{nonce}'; "
-        # Allow Plyr's blank.mp4 fallback (and blobs for MSE)
         "media-src 'self' blob: https://cdn.plyr.io; "
         "worker-src 'self' blob:"
     )
@@ -99,7 +95,7 @@ async def add_security_headers(request: Request, call_next):
 
 logging.getLogger("scanner").info("TMDB key present: %s", bool(settings.TMDB_API_KEY))
 
-# --- Startup (DB + scheduler) ---
+# --- Startup (DB) ---
 @app.on_event("startup")
 async def startup_event():
     await init_db()
@@ -108,18 +104,13 @@ async def startup_event():
 
 @app.get("/", response_class=HTMLResponse)
 async def root(request: Request, db: AsyncSession = Depends(get_db)):
-    # 1) First-run: no users -> /register
     try:
-        user_count = (await db.execute(
-            select(func.count()).select_from(User)
-        )).scalar_one()
+        user_count = (await db.execute(select(func.count()).select_from(User))).scalar_one()
     except Exception:
         user_count = 0
-
     if user_count == 0:
         return RedirectResponse("/register", status_code=307)
 
-    # 2) Otherwise: check auth cookie
     token = request.cookies.get(ACCESS_COOKIE)
     payload = decode_token(token) if token else None
     if payload and payload.get("typ") == "access":
@@ -139,12 +130,10 @@ async def home(
         select(func.count()).select_from(MediaItem).where(MediaItem.kind == MediaKind.show)
     )).scalar_one()
     recent_movies = (await db.execute(
-        select(MediaItem).where(MediaItem.kind == MediaKind.movie)
-        .order_by(MediaItem.created_at.desc()).limit(30)
+        select(MediaItem).where(MediaItem.kind == MediaKind.movie).order_by(MediaItem.created_at.desc()).limit(30)
     )).scalars().all()
     recent_tv = (await db.execute(
-        select(MediaItem).where(MediaItem.kind == MediaKind.show)
-        .order_by(MediaItem.created_at.desc()).limit(30)
+        select(MediaItem).where(MediaItem.kind == MediaKind.show).order_by(MediaItem.created_at.desc()).limit(30)
     )).scalars().all()
     libs = (await db.execute(
         select(Library).where(Library.owner_user_id == user.id).order_by(Library.created_at.desc())
@@ -152,14 +141,8 @@ async def home(
 
     return templates.TemplateResponse(
         "home.html",
-        {
-            "request": request,
-            "movies_count": movies_count,
-            "shows_count": shows_count,
-            "recent_movies": recent_movies,
-            "recent_tv": recent_tv,
-            "libraries": libs,
-        },
+        {"request": request, "movies_count": movies_count, "shows_count": shows_count,
+         "recent_movies": recent_movies, "recent_tv": recent_tv, "libraries": libs}
     )
 
 @app.get("/health")
@@ -183,10 +166,141 @@ async def auth_register_get_redirect():
 async def auth_login_get_redirect():
     return RedirectResponse("/login", status_code=307)
 
+# ------------------ MOVIES ------------------
+
+@app.get("/movies", response_class=HTMLResponse)
+async def movies_index(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user = Depends(get_current_user),
+):
+    movies = (await db.execute(
+        select(MediaItem).where(MediaItem.kind == MediaKind.movie).order_by(MediaItem.created_at.desc())
+    )).scalars().all()
+    return templates.TemplateResponse("movies.html", {"request": request, "items": movies, "movies": movies, "count": len(movies)})
+
+@app.get("/movie/{item_id}", response_class=HTMLResponse)
+async def movie_detail(
+    item_id: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user = Depends(get_current_user),
+):
+    movie = await db.get(MediaItem, item_id)
+    if not movie or movie.kind != MediaKind.movie:
+        return RedirectResponse("/movies", status_code=307)
+
+    files = (await db.execute(
+        select(MediaFile).where(MediaFile.media_item_id == movie.id).order_by(MediaFile.created_at.asc())
+    )).scalars().all()
+
+    return templates.TemplateResponse("movie_detail.html", {"request": request, "item": movie, "files": files})
+
+# ------------------ TV ------------------
+
+@app.get("/tv", response_class=HTMLResponse)
+async def tv_grid(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user = Depends(get_current_user),
+):
+    shows = (await db.execute(
+        select(MediaItem).where(MediaItem.kind == MediaKind.show).order_by(MediaItem.sort_title.asc()).limit(5000)
+    )).scalars().all()
+    return templates.TemplateResponse("tv.html", {"request": request, "items": shows})
+
+@app.get("/show/{show_id}", response_class=HTMLResponse)
+async def show_detail_page(
+    show_id: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user = Depends(get_current_user),
+):
+    show = await db.get(MediaItem, show_id)
+    if not show or show.kind != MediaKind.show:
+        return RedirectResponse("/tv", status_code=307)
+
+    seasons = (await db.execute(
+        select(MediaItem)
+        .where(MediaItem.parent_id == show.id, MediaItem.kind == MediaKind.season)
+        .order_by(MediaItem.sort_title.asc())
+    )).scalars().all()
+
+    # first playable (first ep's first file)
+    first_play_file_id = None
+    if seasons:
+        first_ep = (await db.execute(
+            select(MediaItem)
+            .where(MediaItem.kind == MediaKind.episode, MediaItem.parent_id.in_([s.id for s in seasons]))
+            .order_by(MediaItem.sort_title.asc())
+            .limit(1)
+        )).scalars().first()
+        if first_ep:
+            first_file = (await db.execute(
+                select(MediaFile).where(MediaFile.media_item_id == first_ep.id).limit(1)
+            )).scalars().first()
+            first_play_file_id = first_file.id if first_file else None
+
+    return templates.TemplateResponse(
+        "show_detail.html",
+        {"request": request, "item": show, "seasons": seasons, "episodes": [], "first_play_file_id": first_play_file_id}
+    )
+
+@app.get("/show/{show_id}/season/{season_num}", response_class=HTMLResponse)
+async def season_detail_page(
+    show_id: str,
+    season_num: int,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user = Depends(get_current_user),
+):
+    show = await db.get(MediaItem, show_id)
+    if not show or show.kind != MediaKind.show:
+        return RedirectResponse("/tv", status_code=307)
+
+    seasons = (await db.execute(
+        select(MediaItem).where(MediaItem.parent_id == show.id, MediaItem.kind == MediaKind.season)
+        .order_by(MediaItem.sort_title.asc())
+    )).scalars().all()
+
+    season_title = f"Season {season_num}"
+    season = (await db.execute(
+        select(MediaItem).where(
+            MediaItem.parent_id == show.id,
+            MediaItem.kind == MediaKind.season,
+            MediaItem.title == season_title
+        )
+    )).scalars().first()
+    if not season and 1 <= season_num <= len(seasons):
+        season = seasons[season_num - 1]
+    if not season:
+        return RedirectResponse(f"/show/{show.id}", status_code=307)
+
+    eps = (await db.execute(
+        select(MediaItem).where(MediaItem.parent_id == season.id, MediaItem.kind == MediaKind.episode)
+        .order_by(MediaItem.sort_title.asc())
+    )).scalars().all()
+
+    episodes = []
+    for ep in eps:
+        mf = (await db.execute(select(MediaFile).where(MediaFile.media_item_id == ep.id).limit(1))).scalars().first()
+        episodes.append({
+            "id": ep.id,
+            "title": ep.title,
+            "poster_url": getattr(ep, "poster_url", None),
+            "extra_json": ep.extra_json,
+            "first_file_id": mf.id if mf else None,
+        })
+
+    return templates.TemplateResponse(
+        "show_detail.html",
+        {"request": request, "item": show, "seasons": seasons, "episodes": episodes, "first_play_file_id": None}
+    )
+
 # ------------------------------ Routers ---------------------------------
 app.include_router(auth_router, prefix="/auth")
 app.include_router(libraries_router)
-app.include_router(browse_router)
+# app.include_router(browse_router)  # ❌ comment out to prevent path conflicts with /movies, /movie/{id}, etc.
 app.include_router(fs_router)
 app.include_router(settings_api_router)
 app.include_router(admin_users_router)
@@ -203,7 +317,7 @@ async def settings_root(request: Request, user = Depends(get_current_user)):
 
 @app.get("/settings/{panel}", response_class=HTMLResponse)
 async def settings_panel(panel: str, request: Request, user = Depends(get_current_user)):
-    allowed = {"general","libraries","remote","transcoder","users","tasks"}
+    allowed = {"general", "libraries", "remote", "transcoder", "users", "tasks"}
     if panel not in allowed:
         panel = "general"
     return templates.TemplateResponse("settings_shell.html", {"request": request, "panel": panel})

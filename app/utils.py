@@ -270,29 +270,70 @@ def parse_movie_from_path(path: str) -> Optional[Tuple[str, Optional[int]]]:
 # TV
 _TV_SXXEYY = re.compile(r"(?i)\bS(\d{1,2})E(\d{1,2})\b")
 _TV_ALT   = re.compile(r"(?i)\b(\d{1,2})x(\d{1,2})\b")
-def parse_tv_parts(rel_dir: str, filename: str) -> Optional[Tuple[str, int, int, str]]:
-    pathish = SEP_RE.sub(" ", f"{rel_dir} {filename}")
-    m = _TV_SXXEYY.search(pathish) or _TV_ALT.search(pathish)
-    if not m:
+def parse_tv_parts(rel_root: str, path: str):
+    """
+    Return (show_title:str, season:int, episode:int, ep_title_guess:str|None)
+
+    Handles examples:
+      Yellowstone.2018.S05E11.Three.Fifty-Three.1080p...
+      The Last of Us S01E06 Kin.mkv
+      Show S05E07.E08 Title.mkv
+      Show S05E07-08 Title.mkv
+      Show S05e11 E12 Title.mkv
+    """
+    fname = os.path.basename(path)
+    hay = os.path.join(rel_root or "", fname)
+
+    # normalize separators to spaces
+    norm = re.sub(r"[\._\-]+", " ", hay, flags=re.IGNORECASE).strip()
+
+    # season marker
+    s = re.search(r"(?i)\bS(\d{1,2})\b", norm)
+    if not s:
         return None
-    if m.re is _TV_SXXEYY:
-        season = int(m.group(1)); episode = int(m.group(2))
-    else:
-        season = int(m.group(1)); episode = int(m.group(2))
-    show_raw = pathish[:m.start()]
-    show_tokens = _tokenize(show_raw)
-    show_tokens = _clean_front_noise(show_tokens)
-    show_title, _ = _title_from_tokens(show_tokens)
-    if not show_title:
+    season = int(s.group(1))
+    tail = norm[s.end():]
+
+    # collect episode numbers appearing after the season marker
+    eps = []
+
+    # E07, e07 … (collect all)
+    for m in re.finditer(r"(?i)\bE(\d{1,3})\b", tail):
+        eps.append(int(m.group(1)))
+
+    # Ranges like E07-08 (expand both ends)
+    for m in re.finditer(r"(?i)\bE(\d{1,3})\s*[-–]\s*(\d{1,3})\b", tail):
+        a, b = int(m.group(1)), int(m.group(2))
+        if a not in eps: eps.append(a)
+        if b not in eps: eps.append(b)
+
+    # If no explicit E-tokens, try a bare number right after the season area
+    if not eps:
+        m = re.search(r"\b(\d{1,3})\b", tail)
+        if m:
+            eps.append(int(m.group(1)))
+
+    if not eps:
         return None
-    tail_tokens = _tokenize(pathish[m.end():])
-    guess_tokens = []
-    for t in tail_tokens:
-        if t.lower() in _BREAK_TOKENS or t.lower() in _GROUP_OR_SERVICE:
-            break
-        guess_tokens.append(t)
-    ep_guess = " ".join(guess_tokens).strip()
-    return (show_title, season, episode, ep_guess)
+
+    # show title is text before the season marker
+    show_title = re.sub(r"\s+", " ", norm[:s.start()]).strip(" -._")
+
+    # episode title guess = text after last E-token
+    last_e = list(re.finditer(r"(?i)\bE(\d{1,3})\b", norm[s.start():]))
+    ep_title_guess = None
+    if last_e:
+        last_end = s.start() + last_e[-1].end()
+        ep_title_guess = norm[last_end:].strip(" -._")
+        # If the "title" is actually just codec/quality junk, drop it
+        if re.fullmatch(
+            r"(?i)(?:\d{3,4}p|x26[45]|H\.?26[45]|HEVC|AVC|WEB(?:DL|Rip)?|BluRay|DDP?\.?\d(?:\.\d)?|AAC|DTS(?:-HD)?|HDR|10bit|NF|AMZN|HULU|REMUX)\b.*",
+            ep_title_guess or ""
+        ):
+            ep_title_guess = None
+
+    # return only the first episode to preserve existing scanner behavior
+    return (show_title, season, eps[0], ep_title_guess)
 
 # =======================
 # ffprobe (best-effort)

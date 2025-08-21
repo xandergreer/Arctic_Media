@@ -2,13 +2,15 @@
 from __future__ import annotations
 
 import os
+import re
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
-from sqlalchemy import select, delete
+from sqlalchemy import select, delete, func
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.exc import IntegrityError
 
 from .auth import get_current_user, require_admin
 from .config import settings
@@ -17,11 +19,7 @@ from .metadata import enrich_library
 from .models import Library, MediaFile, MediaItem, MediaKind
 from .scanner import scan_movie_library, scan_tv_library
 from .schemas import LibraryOut
-from .utils import (
-    guess_title_year,
-    normalize_sort,
-    slugify,
-)
+from .utils import guess_title_year, normalize_sort  # (no slugify import here)
 
 router = APIRouter(prefix="/libraries", tags=["libraries"])
 
@@ -39,6 +37,104 @@ class LibraryCreateIn(BaseModel):
     name: Optional[str] = None
     type: str              # "movie" | "tv"
     path: str
+
+# ───────────────────────── Slug utilities ─────────────────────────
+
+_slug_re = re.compile(r"[^a-z0-9]+")
+
+def slugify(s: str) -> str:
+    s = (s or "").lower().strip()
+    s = _slug_re.sub("-", s).strip("-")
+    return s or "library"
+
+async def generate_unique_slug(db: AsyncSession, owner_user_id: str, base: str) -> str:
+    """
+    Return a slug unique for (owner_user_id, slug):
+      base, base-2, base-3, ...
+    """
+    base = slugify(base)
+    slug = base
+    n = 2
+    while True:
+        exists = (await db.execute(
+            select(func.count()).select_from(Library)
+            .where(Library.owner_user_id == owner_user_id, Library.slug == slug)
+        )).scalar_one()
+        if exists == 0:
+            return slug
+        slug = f"{base}-{n}"
+        n += 1
+
+# ───────────────────────── Title normalization (TV) ─────────────────────────
+
+# Junk patterns commonly found in folder/file names that should not be part of a show title.
+_JUNK_PATTERNS = re.compile(
+    r"""(?ix)
+        \b(19|20)\d{2}\b|          # years
+        \bS\d{1,2}E\d{1,3}\b|      # SxxEyy
+        \bS\d{1,2}\b|              # Sxx
+        \bE\d{1,3}\b|              # Exx
+        \b(2160p|1080p|720p|4k)\b|
+        \b(HEVC|H\.?265|H\.?264|x265|x264)\b|
+        \b(Blu-?Ray|WEB[- ]?(DL|Rip)|HDR10|HDR|DV|DoVi)\b|
+        \b(DDP?\.?5\.1|AAC|FLAC|DTS[- ]?HD(?:MA)?)\b|
+        \b(PROPER|REPACK|EXTENDED|INTERNAL|UNCENSORED)\b
+    """
+)
+
+def _clean_segment(name: str) -> str:
+    """Normalize a folder/file-ish segment to a clean human title."""
+    n = name.replace(".", " ").replace("_", " ").strip()
+    n = _JUNK_PATTERNS.sub("", n)
+    n = re.sub(r"\s{2,}", " ", n).strip(" -_.")
+    # Drop leading library labels like TV, Shows
+    if n.lower().startswith("tv "):
+        n = n[3:].strip()
+    if n.lower() in {"tv", "shows", "tv shows"}:
+        n = ""
+    return n
+
+def _collapse_dupes(s: str) -> str:
+    """Collapse duplicated adjacent words: 'Yellowstone Yellowstone' -> 'Yellowstone'."""
+    if not s:
+        return s
+    s = re.sub(r"\b(\w+)(\s+\1)+\b", r"\1", s, flags=re.I)
+    s = re.sub(r"^(?P<x>.+?)\s+\1$", r"\g<x>", s, flags=re.I)
+    return s.strip()
+
+def _clean_show_title_from_existing(title: str) -> str:
+    """Clean a show title that may have picked up 'TV' or release junk."""
+    t = _clean_segment(title)
+    t = re.sub(r"^(tv|shows|tv shows)\s+", "", t, flags=re.I).strip()
+    t = _collapse_dupes(t)
+    return t
+
+async def _retitle_tv_shows(db: AsyncSession, library_id: str) -> int:
+    """
+    In-place cleanup for TV show titles in a library.
+    - Strips 'TV ' prefixes and release junk that slipped into the stored show title.
+    - Collapses duplicated words like 'Yellowstone Yellowstone'.
+    Returns the number of show rows changed.
+    """
+    shows = (await db.execute(
+        select(MediaItem).where(
+            MediaItem.library_id == library_id,
+            MediaItem.kind == MediaKind.show
+        )
+    )).scalars().all()
+
+    changed = 0
+    for show in shows:
+        old = show.title or ""
+        new = _clean_show_title_from_existing(old)
+        if new and new != old:
+            show.title = new
+            show.sort_title = normalize_sort(new)
+            changed += 1
+
+    if changed:
+        await db.commit()
+    return changed
 
 # ───────────────────────── APIs ─────────────────────────
 
@@ -78,26 +174,37 @@ async def create_library(
         name = tail or ("Movies" if lib_type == "movie" else "TV")
 
     # Prevent duplicates for this owner/path pair
-    existing = (
-        await db.execute(
-            select(Library).where(
-                Library.owner_user_id == admin.id,
-                Library.path == abs_path,
-            )
+    existing = (await db.execute(
+        select(Library).where(
+            Library.owner_user_id == admin.id,
+            Library.path == abs_path,
         )
-    ).scalars().first()
+    )).scalars().first()
     if existing:
         return existing
+
+    # Unique slug for this owner
+    base_for_slug = name or lib_type
+    slug = await generate_unique_slug(db, admin.id, base_for_slug)
 
     lib = Library(
         owner_user_id = admin.id,
         name          = name,
-        slug          = slugify(name),
+        slug          = slug,     # e.g., tv, tv-2, tv-3
         type          = lib_type,
         path          = abs_path,
     )
-    db.add(lib)
-    await db.commit()
+
+    try:
+        db.add(lib)
+        await db.commit()
+    except IntegrityError:
+        # Extremely rare race: regenerate and try once more
+        await db.rollback()
+        lib.slug = await generate_unique_slug(db, admin.id, base_for_slug)
+        db.add(lib)
+        await db.commit()
+
     await db.refresh(lib)
     return lib
 
@@ -107,11 +214,9 @@ async def delete_library(
     db: AsyncSession = Depends(get_db),
     admin = Depends(require_admin),
 ):
-    lib = (
-        await db.execute(
-            select(Library).where(Library.id == library_id, Library.owner_user_id == admin.id)
-        )
-    ).scalars().first()
+    lib = (await db.execute(
+        select(Library).where(Library.id == library_id, Library.owner_user_id == admin.id)
+    )).scalars().first()
     if not lib:
         raise HTTPException(status_code=404, detail="Library not found")
 
@@ -125,22 +230,23 @@ async def scan_library(
     db: AsyncSession = Depends(get_db),
     admin = Depends(require_admin),
 ):
-    lib = (
-        await db.execute(
-            select(Library).where(Library.id == library_id, Library.owner_user_id == admin.id)
-        )
-    ).scalars().first()
+    lib = (await db.execute(
+        select(Library).where(Library.id == library_id, Library.owner_user_id == admin.id)
+    )).scalars().first()
     if not lib:
         raise HTTPException(status_code=404, detail="Library not found")
 
     if lib.type == "movie":
         stats = await scan_movie_library(db, lib)
-    elif lib.type == "tv":
-        stats = await scan_tv_library(db, lib)
-    else:
-        raise HTTPException(status_code=400, detail="Unsupported library type")
+        return {"ok": True, **stats}
 
-    return {"ok": True, **stats}
+    if lib.type == "tv":
+        stats = await scan_tv_library(db, lib)
+        # Cleanup show titles that accidentally captured "TV"/release junk
+        retitled = await _retitle_tv_shows(db, lib.id)
+        return {"ok": True, "tv_retitled": retitled, **stats}
+
+    raise HTTPException(status_code=400, detail="Unsupported library type")
 
 @router.post("/{library_id}/refresh_metadata")
 async def refresh_metadata_endpoint(
@@ -150,11 +256,9 @@ async def refresh_metadata_endpoint(
     db: AsyncSession = Depends(get_db),
     admin = Depends(require_admin),
 ):
-    lib = (
-        await db.execute(
-            select(Library).where(Library.id == library_id, Library.owner_user_id == admin.id)
-        )
-    ).scalars().first()
+    lib = (await db.execute(
+        select(Library).where(Library.id == library_id, Library.owner_user_id == admin.id)
+    )).scalars().first()
     if not lib:
         raise HTTPException(status_code=404, detail="Library not found")
 
@@ -225,3 +329,20 @@ async def retitle_movies(
 
     await db.commit()
     return {"retitled": changed}
+
+@router.post("/{library_id}/retitle_tv")
+async def retitle_tv(
+    library_id: str,
+    db: AsyncSession = Depends(get_db),
+    admin = Depends(require_admin),
+):
+    lib = (await db.execute(
+        select(Library).where(Library.id == library_id, Library.owner_user_id == admin.id)
+    )).scalars().first()
+    if not lib:
+        raise HTTPException(status_code=404, detail="Library not found")
+    if lib.type != "tv":
+        raise HTTPException(status_code=400, detail="This endpoint is only for TV libraries")
+
+    changed = await _retitle_tv_shows(db, library_id)
+    return {"tv_retitled": changed}

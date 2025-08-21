@@ -174,7 +174,6 @@
   ('app', 'F:\\Arctic_Media\\app\\__init__.py', 'PYMODULE'),
   ('app.admin_users', 'F:\\Arctic_Media\\app\\admin_users.py', 'PYMODULE'),
   ('app.auth', 'F:\\Arctic_Media\\app\\auth.py', 'PYMODULE'),
-  ('app.browse', 'F:\\Arctic_Media\\app\\browse.py', 'PYMODULE'),
   ('app.config', 'F:\\Arctic_Media\\app\\config.py', 'PYMODULE'),
   ('app.database', 'F:\\Arctic_Media\\app\\database.py', 'PYMODULE'),
   ('app.fsbrowse', 'F:\\Arctic_Media\\app\\fsbrowse.py', 'PYMODULE'),

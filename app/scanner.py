@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import asyncio
 import logging
+import re
 from typing import Dict, List, Optional, Set, Tuple
 
 from sqlalchemy import select, func
@@ -18,6 +19,37 @@ from .utils import (
     parse_tv_parts,
     normalize_sort,
 )
+
+_JUNK_PATTERNS = re.compile(
+    r"""(?ix)
+        \b(19|20)\d{2}\b|
+        \bS\d{1,2}E\d{1,3}\b|
+        \bS\d{1,2}\b|
+        \bE\d{1,3}\b|
+        \b(2160p|1080p|720p|4k)\b|
+        \b(HEVC|H\.?265|H\.?264|x265|x264)\b|
+        \b(Blu-?Ray|WEB[- ]?(DL|Rip)|HDR10|HDR|DV|DoVi)\b|
+        \b(DDP?\.?5\.1|AAC|FLAC|DTS[- ]?HD(?:MA)?)\b|
+        \b(PROPER|REPACK|EXTENDED|INTERNAL|UNCENSORED)\b
+    """
+)
+
+def _clean_segment(name: str) -> str:
+    n = name.replace(".", " ").replace("_", " ").strip()
+    n = _JUNK_PATTERNS.sub("", n)
+    n = re.sub(r"\s{2,}", " ", n).strip(" -_.")
+    if n.lower().startswith("tv "):
+        n = n[3:].strip()
+    if n.lower() in {"tv", "shows", "tv shows"}:
+        return ""
+    return n
+
+def _clean_show_title_from_existing(title: str) -> str:
+    t = _clean_segment(title)
+    t = re.sub(r"^(tv|shows|tv shows)\s+", "", t, flags=re.I).strip()
+    t = re.sub(r"\b(\w+)(\s+\1)+\b", r"\1", t, flags=re.I)  # collapse dupes
+    return t
+
 
 log = logging.getLogger("scanner")
 

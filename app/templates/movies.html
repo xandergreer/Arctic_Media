@@ -1,6 +1,7 @@
-{% set title = "Movies" %}
-{% include "partials/_header.html" %}
+{% extends "base.html" %}
+{% block title %}Movies • Arctic{% endblock %}
 
+{% block content %}
 <div class="container">
     <h1>Movies</h1>
     <div class="muted">{{ items|length }} titles</div>
@@ -9,7 +10,6 @@
         {% for m in items %}
         {% set ej = m.extra_json or {} %}
         {% set poster = ej.get('poster') or m.poster_url or '/static/img/placeholder.png' %}
-
         <a class="card" href="/movie/{{ m.id }}" title="{{ m.title }}">
             <img loading="lazy" src="{{ poster }}" alt="{{ m.title }}">
             <div class="card-meta">
@@ -20,5 +20,4 @@
         {% endfor %}
     </div>
 </div>
-
-{% include "partials/_footer.html" %}
+{% endblock %}

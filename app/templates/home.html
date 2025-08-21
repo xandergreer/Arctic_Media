@@ -48,7 +48,7 @@
     <div class="row-viewport" id="row-tv">
         <div class="row-track">
             {% for s in recent_tv %}
-            <a class="poster-card" href="#" title="{{ s.title }}">
+            <a class="poster-card" href="/show/{{ s.id }}" title="{{ s.title }}">
                 <div class="poster">
                     {% set meta = s.extra_json or {} %}
                     <img loading="lazy" src="{{ meta.get('poster') or s.poster_url or '/static/img/placeholder.png' }}"

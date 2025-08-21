@@ -1,42 +1,169 @@
-<!-- app/templates/show_detail.html -->
-{% set meta = show.extra_json or {} %}
-{% set poster = meta.get('poster') or '/static/img/placeholder.png' %}
-{% set backdrop = meta.get('backdrop') %}
-{% include "partials/_header.html" %}
+{% extends "base.html" %}
+{% block title %}{{ item.title }} – Arctic{% endblock %}
 
+{% block content %}
 <div class="page show-detail">
-    <div class="hero" {% if backdrop %}style="background-image:url('{{ backdrop }}')" {% endif %}>
-        <div class="hero-content">
-            <img class="hero-poster" src="{{ poster }}" alt="{{ show.title }}">
-            <div class="hero-info">
-                <h1>{{ show.title }}</h1>
-                {% if meta.get('genres') %}<div class="genres">{{ meta['genres']|join(', ') }}</div>{% endif %}
-                {% if meta.get('overview') %}<p class="overview">{{ meta['overview'] }}</p>{% endif %}
-                <div class="facts">
-                    {% if meta.get('first_air_date') %}<span>First aired {{ meta['first_air_date'] }}</span>{% endif %}
-                    {% if meta.get('number_of_seasons') %}<span>• {{ meta['number_of_seasons'] }} seasons</span>{% endif
-                    %}
-                    {% if meta.get('number_of_episodes') %}<span>• {{ meta['number_of_episodes'] }} episodes</span>{%
-                    endif %}
-                </div>
+    <!-- Hero -->
+    <div class="hero" style="--bg:url('{{ (item.extra_json or {}).get('backdrop') or (item.backdrop_url or '') }}')">
+        <div class="poster">
+            <img src="{{ (item.extra_json or {}).get('poster') or item.poster_url or '/static/img/placeholder.png' }}"
+                alt="{{ item.title }}">
+        </div>
+        <div class="meta">
+            <h1 class="title">{{ item.title }}</h1>
+            {% set ej = item.extra_json or {} %}
+            <div class="tagline muted">{% if item.year %}{{ item.year }} · {% endif %}TV Series</div>
+            {% if ej.get('overview') %}<p class="hero-overview">{{ ej['overview'] }}</p>{% endif %}
+            <div class="actions">
+                {% if first_play_file_id %}
+                <button id="playBtn" class="btn primary" data-file="{{ first_play_file_id }}">▶ Play</button>
+                {% endif %}
+                <a class="btn" href="/tv">Back to TV</a>
             </div>
         </div>
     </div>
 
-    <h2>Seasons</h2>
-    <div class="media-row">
-        {% for season in seasons %}
-        <a class="media-card sm" href="/show/{{ show.id }}/season/{{ (season.title.split()[-1])|int }}">
-            <div class="poster-wrap">
-                <!-- No dedicated season poster yet; fall back to show poster -->
-                <img loading="lazy" src="{{ poster }}" alt="{{ season.title }}">
+    <!-- Collapsible player -->
+    <section class="player-wrap collapsed" id="playerWrap">
+        <div class="player-bar">
+            <div class="left"><strong>Now Playing:</strong> <span id="npTitle">{{ item.title }}</span></div>
+            <div class="right">
+                <select id="sourceSelect" class="select"></select>
+                <button id="minBtn" class="btn small">–</button>
+                <button id="closeBtn" class="btn small">✕</button>
             </div>
-            <div class="meta">
+        </div>
+        <div class="player-area">
+            <video id="plyr" playsinline controls preload="metadata"
+                poster="{{ ej.get('poster') or item.poster_url or '/static/img/placeholder.png' }}"></video>
+        </div>
+    </section>
+
+    {% if seasons|length %}
+    <h2>Seasons</h2>
+    <div class="grid">
+        {% for season in seasons %}
+        {% set sej = season.extra_json or {} %}
+        {% set sposter = sej.get('poster') or season.poster_url or '/static/img/placeholder.png' %}
+        <a class="card" href="/show/{{ item.id }}/season/{{ loop.index }}">
+            <img loading="lazy" src="{{ sposter }}" alt="{{ season.title }}">
+            <div class="card-meta">
                 <div class="title">{{ season.title }}</div>
+                {% if sej.get('air_date') %}<div class="sub">{{ sej['air_date'][:4] }}</div>{% endif %}
             </div>
         </a>
         {% endfor %}
     </div>
+    {% endif %}
+
+    {% if episodes|length %}
+    <h2>Episodes</h2>
+    <div class="grid">
+        {% for ep in episodes %}
+        {% set eej = ep.extra_json or {} %}
+        {% set still = eej.get('still') or ep.poster_url or '/static/img/placeholder.png' %}
+        <div class="card ep-card" data-file="{{ ep.first_file_id }}" title="{{ ep.title }}">
+            <img loading="lazy" src="{{ still }}" alt="{{ ep.title }}">
+            <div class="card-meta">
+                <div class="title">{{ "%02d" % (eej.get('episode') or loop.index) }} · {{ ep.title }}</div>
+                {% if eej.get('air_date') %}<div class="sub">{{ eej['air_date'] }}</div>{% endif %}
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+    {% endif %}
 </div>
 
-{% include "partials/_footer.html" %}
+<link rel="stylesheet" href="https://cdn.plyr.io/3.7.8/plyr.css">
+<script src="https://cdn.plyr.io/3.7.8/plyr.polyfilled.js" nonce="{{ request.state.csp_nonce }}"></script>
+
+<script nonce="{{ request.state.csp_nonce }}">
+    (function () {
+        const wrap = document.getElementById('playerWrap');
+        const playBtn = document.getElementById('playBtn');
+        const minBtn = document.getElementById('minBtn');
+        const closeBtn = document.getElementById('closeBtn');
+        const npTitle = document.getElementById('npTitle');
+
+        const video = document.getElementById('plyr');
+        const player = new Plyr(video, { ratio: '16:9', seekTime: 10 });
+
+        function loadSource(url, fileId, title) {
+            player.source = { type: 'video', sources: [{ src: url, type: 'video/mp4' }] };
+            npTitle.textContent = title || '';
+            wrap.classList.remove('collapsed'); wrap.classList.add('expanded');
+        }
+        function closePlayer() { try { player.pause(); } catch { } wrap.classList.add('collapsed'); wrap.classList.remove('expanded', 'mini'); }
+
+        playBtn?.addEventListener('click', () => {
+            const fid = playBtn.dataset.file;
+            loadSource(`/stream/${fid}/file`, fid, "{{ item.title }}");
+        });
+
+        document.querySelectorAll('.ep-card').forEach(card => {
+            card.addEventListener('click', () => {
+                const fid = card.dataset.file; if (!fid) return;
+                loadSource(`/stream/${fid}/file`, fid, card.querySelector('.title').textContent);
+            });
+        });
+
+        document.getElementById('minBtn')?.addEventListener('click', () => {
+            wrap.classList.toggle('mini'); wrap.classList.toggle('expanded');
+        });
+        document.getElementById('closeBtn')?.addEventListener('click', closePlayer);
+    })();
+</script>
+
+<style>
+    .show-detail .hero {
+        display: grid;
+        grid-template-columns: 220px 1fr;
+        gap: 22px;
+        padding: 20px;
+        border-radius: 16px;
+        background: linear-gradient(to bottom, rgba(0, 0, 0, .45), rgba(0, 0, 0, .65)), var(--bg) center/cover no-repeat;
+    }
+
+    .show-detail .poster img {
+        width: 220px;
+        border-radius: 12px;
+        box-shadow: 0 10px 24px rgba(0, 0, 0, .4);
+    }
+
+    .show-detail .meta .title {
+        font-size: 28px;
+        margin: 0 0 6px;
+    }
+
+    .show-detail .actions .btn {
+        margin-right: 8px;
+    }
+
+    .player-wrap {
+        margin: 18px 0;
+        border: 1px solid rgba(255, 255, 255, .08);
+        border-radius: 14px;
+        background: #0e0e0f;
+        display: none;
+    }
+
+    .player-wrap.expanded,
+    .player-wrap.mini {
+        display: block;
+    }
+
+    .player-wrap.mini {
+        position: fixed;
+        right: 16px;
+        bottom: 16px;
+        width: 360px;
+        max-width: 45vw;
+        z-index: 50;
+        box-shadow: 0 10px 30px rgba(0, 0, 0, .5);
+    }
+
+    .player-wrap.collapsed {
+        display: none;
+    }
+</style>
+{% endblock %}

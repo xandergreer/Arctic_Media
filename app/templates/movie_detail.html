@@ -1,6 +1,7 @@
-{% set title = (item.title or "Movie") ~ " – Arctic" %}
-{% include "partials/_header.html" %}
+{% extends "base.html" %}
+{% block title %}{{ (item.title or "Movie") ~ " – Arctic" }}{% endblock %}
 
+{% block content %}
 <div class="page movie-detail">
 
     <!-- Hero -->
@@ -10,14 +11,12 @@
                 alt="{{ item.title }}">
         </div>
         <div class="meta">
-            <h1 class="title">{{ item.title }}
-                {% if item.year %}<span class="year">({{ item.year }})</span>{% endif %}
+            <h1 class="title">
+                {{ item.title }}{% if item.year %}<span class="year">({{ item.year }})</span>{% endif %}
             </h1>
             {% set ej = item.extra_json or {} %}
             {% if ej.get('tagline') %}<div class="tagline">{{ ej['tagline'] }}</div>{% endif %}
-            {% if ej.get('genres') %}
-            <div class="genres">{{ ", ".join(ej['genres']) }}</div>
-            {% endif %}
+            {% if ej.get('genres') %}<div class="genres">{{ ", ".join(ej['genres']) }}</div>{% endif %}
             <div class="actions">
                 {% if files %}
                 <button id="playBtn" class="btn primary" data-file="{{ files[0].id }}">▶ Play</button>
@@ -27,13 +26,11 @@
         </div>
     </div>
 
-    <!-- Collapsible player (stays on this page) -->
+    <!-- Collapsible player -->
     {% if files %}
     <section class="player-wrap collapsed" id="playerWrap">
         <div class="player-bar">
-            <div class="left">
-                <strong>Now Playing:</strong> {{ item.title }}
-            </div>
+            <div class="left"><strong>Now Playing:</strong> {{ item.title }}</div>
             <div class="right">
                 <select id="sourceSelect" class="select">
                     {% for f in files %}
@@ -46,17 +43,13 @@
                 <button id="closeBtn" class="btn small" title="Close">✕</button>
             </div>
         </div>
-
         <div class="player-area">
             <video id="plyr" playsinline controls preload="metadata"
-                poster="{{ ej.get('poster') or item.poster_url or '/static/img/placeholder.png' }}">
-                <!-- src set by JS -->
-            </video>
+                poster="{{ ej.get('poster') or item.poster_url or '/static/img/placeholder.png' }}"></video>
         </div>
     </section>
     {% endif %}
 
-    <!-- Overview -->
     {% if ej.get('overview') %}
     <section class="panel">
         <h2>Overview</h2>
@@ -64,7 +57,6 @@
     </section>
     {% endif %}
 
-    <!-- Cast (horizontal scroll) -->
     {% if ej.get('cast') %}
     <section class="panel">
         <div class="panel-head">
@@ -81,10 +73,9 @@
         </div>
     </section>
     {% endif %}
-
 </div>
 
-<!-- Plyr assets (CDN). If your CSP is strict, allow cdn.plyr.io in script-src & style-src OR host these files locally. -->
+<!-- Plyr (ok in body; CSP nonce added) -->
 <link rel="stylesheet" href="https://cdn.plyr.io/3.7.8/plyr.css">
 <script src="https://cdn.plyr.io/3.7.8/plyr.polyfilled.js" nonce="{{ request.state.csp_nonce }}"></script>
 
@@ -98,26 +89,13 @@
 
         if (!wrap || !playBtn) return;
 
-        // init Plyr
         const video = document.getElementById('plyr');
-        const player = new Plyr(video, {
-            ratio: '16:9',
-            clickToPlay: true,
-            seekTime: 10,
-            keyboard: { focused: true, global: true }
-        });
+        const player = new Plyr(video, { ratio: '16:9', clickToPlay: true, seekTime: 10, keyboard: { focused: true, global: true } });
 
-        // resume position per-file
         const posKey = (fid) => `ams:pos:${fid}`;
         function loadSource(url, fileId, autoplay = true) {
-            // set video source
-            player.source = {
-                type: 'video',
-                sources: [{ src: url, type: 'video/mp4' }], // browser will still try other containers via sniffing
-            };
+            player.source = { type: 'video', sources: [{ src: url, type: 'video/mp4' }] };
             video.dataset.fileId = fileId;
-
-            // resume time if available
             try {
                 const last = parseFloat(localStorage.getItem(posKey(fileId)) || 'NaN');
                 if (!Number.isNaN(last) && last > 1) {
@@ -125,43 +103,22 @@
                 } else if (autoplay) {
                     player.once('canplay', () => player.play());
                 }
-            } catch {
-                if (autoplay) player.once('canplay', () => player.play());
-            }
+            } catch { if (autoplay) player.once('canplay', () => player.play()); }
         }
 
-        // open player
-        function openPlayer() {
-            wrap.classList.remove('collapsed');
-            wrap.classList.add('expanded');
-        }
-        // minimize to small floating bar
-        function minimizePlayer() {
-            wrap.classList.remove('expanded');
-            wrap.classList.add('mini');
-        }
-        // close player
-        function closePlayer() {
-            try { player.pause(); } catch { }
-            wrap.classList.add('collapsed');
-            wrap.classList.remove('expanded', 'mini');
-        }
+        function openPlayer() { wrap.classList.remove('collapsed'); wrap.classList.add('expanded'); }
+        function minimizePlayer() { wrap.classList.remove('expanded'); wrap.classList.add('mini'); }
+        function closePlayer() { try { player.pause(); } catch { } wrap.classList.add('collapsed'); wrap.classList.remove('expanded', 'mini'); }
 
-        // wire buttons
         playBtn.addEventListener('click', () => {
             const fileId = playBtn.dataset.file;
             const url = `/stream/${fileId}/file`;
-            // update select to the file
-            [...sourceSelect.options].forEach(o => {
-                o.selected = (o.dataset.file === fileId);
-            });
+            [...sourceSelect.options].forEach(o => { o.selected = (o.dataset.file === fileId); });
             loadSource(url, fileId, true);
             openPlayer();
         });
 
-        minBtn?.addEventListener('click', () => {
-            if (wrap.classList.contains('mini')) openPlayer(); else minimizePlayer();
-        });
+        minBtn?.addEventListener('click', () => { wrap.classList.contains('mini') ? openPlayer() : minimizePlayer(); });
         closeBtn?.addEventListener('click', closePlayer);
 
         sourceSelect?.addEventListener('change', () => {
@@ -169,35 +126,25 @@
             loadSource(opt.value, opt.dataset.file, true);
         });
 
-        // persist position every 3s
         let tLast = 0;
         player.on('timeupdate', () => {
-            const fid = video.dataset.fileId;
-            if (!fid) return;
+            const fid = video.dataset.fileId; if (!fid) return;
             const now = performance.now();
-            if (now - tLast > 3000) {
-                tLast = now;
-                try { localStorage.setItem(posKey(fid), String(player.currentTime)); } catch { }
-            }
+            if (now - tLast > 3000) { tLast = now; try { localStorage.setItem(posKey(fid), String(player.currentTime)); } catch { } }
         });
-        player.on('ended', () => {
-            const fid = video.dataset.fileId;
-            try { localStorage.removeItem(posKey(fid)); } catch { }
-        });
+        player.on('ended', () => { const fid = video.dataset.fileId; try { localStorage.removeItem(posKey(fid)); } catch { } });
     })();
 </script>
 
 <style>
-    /* ---- Detail layout ---- */
+    /* same styles you had */
     .movie-detail .hero {
         display: grid;
         grid-template-columns: 220px 1fr;
         gap: 22px;
         padding: 20px;
         border-radius: 16px;
-        background:
-            linear-gradient(to bottom, rgba(0, 0, 0, .45), rgba(0, 0, 0, .65)),
-            var(--bg) center/cover no-repeat;
+        background: linear-gradient(to bottom, rgba(0, 0, 0, .45), rgba(0, 0, 0, .65)), var(--bg) center/cover no-repeat;
     }
 
     .movie-detail .poster img {
@@ -232,7 +179,6 @@
         margin-right: 8px;
     }
 
-    /* ---- Player panel ---- */
     .player-wrap {
         margin: 18px 0;
         border: 1px solid rgba(255, 255, 255, .08);
@@ -272,7 +218,6 @@
         background: #000;
     }
 
-    /* minimized floating style */
     .player-wrap.mini {
         position: fixed;
         right: 16px;
@@ -288,12 +233,10 @@
         object-fit: cover;
     }
 
-    /* collapsed (hidden) */
     .player-wrap.collapsed {
         display: none;
     }
 
-    /* ---- Cast strip ---- */
     .cast-strip {
         display: flex;
         gap: 12px;
@@ -333,7 +276,6 @@
         font-size: 12px;
     }
 
-    /* small helpers */
     .select {
         background: #18181d;
         color: #fff;
@@ -352,5 +294,4 @@
         color: #fff;
     }
 </style>
-
-{% include "partials/_footer.html" %}
+{% endblock %}

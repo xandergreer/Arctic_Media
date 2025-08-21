@@ -9,6 +9,7 @@
     <link rel="stylesheet" href="/static/css/base.css?v=9">
     <link rel="stylesheet" href="/static/css/components.css?v=9">
     <link rel="stylesheet" href="/static/css/pages.css?v=9">
+    {% block extra_head %}{% endblock %}
 </head>
 
 <body>
@@ -16,7 +17,6 @@
     <header class="nav">
         <div class="nav-inner container">
             <button id="menu-btn" class="icon-btn" aria-label="Open menu" aria-controls="sidebar" aria-expanded="false">
-                <!-- simple hamburger -->
                 <svg width="22" height="22" viewBox="0 0 24 24" aria-hidden="true">
                     <path fill="currentColor" d="M3 6h18v2H3zm0 5.5h18v2H3zM3 17h18v2H3z" />
                 </svg>
@@ -28,7 +28,13 @@
 
             {% if not hide_nav %}
             <nav class="cluster">
-                <a href="/settings">Settings</a>
+                <a href="/home" class="{{ 'active' if request.url.path == '/home' else '' }}">Home</a>
+                <a href="/movies" class="{{ 'active' if request.url.path.startswith('/movies') else '' }}">Movies</a>
+                <a href="/tv"
+                    class="{{ 'active' if request.url.path.startswith('/tv') or request.url.path.startswith('/show') else '' }}">TV
+                    Shows</a>
+                <a href="/settings"
+                    class="{{ 'active' if request.url.path.startswith('/settings') else '' }}">Settings</a>
                 <form action="/auth/logout" method="post" style="display:inline">
                     <button class="btn btn-ghost" type="submit">Logout</button>
                 </form>
@@ -59,8 +65,9 @@
         {% block content %}{% endblock %}
     </main>
 
+    <!-- main app JS -->
     <script src="/static/js/main.js" nonce="{{ request.state.csp_nonce }}"></script>
-
+    {% block scripts %}{% endblock %}
 </body>
 
 </html>
