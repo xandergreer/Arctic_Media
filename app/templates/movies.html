@@ -1,23 +1,18 @@
-<!-- MOVIES_GRID_V1 -->
-{% extends "base.html" %}
-{% block title %}Movies • Arctic{% endblock %}
-{% block content %}
+{% set title = "Movies" %}
+{% include "partials/_header.html" %}
 
-<div class="page">
-    <div class="page-header">
-        <h1>Movies</h1>
-        <div class="meta">{{ items|length }} titles</div>
-    </div>
+<div class="container">
+    <h1>Movies</h1>
+    <div class="muted">{{ items|length }} titles</div>
 
-    <div class="media-grid">
+    <div class="grid">
         {% for m in items %}
         {% set ej = m.extra_json or {} %}
         {% set poster = ej.get('poster') or m.poster_url or '/static/img/placeholder.png' %}
-        <a class="media-card" href="/movie/{{ m.id }}" title="{{ m.title }}">
-            <div class="poster-wrap">
-                <img loading="lazy" src="{{ poster }}" alt="{{ m.title }}">
-            </div>
-            <div class="meta">
+
+        <a class="card" href="/movie/{{ m.id }}" title="{{ m.title }}">
+            <img loading="lazy" src="{{ poster }}" alt="{{ m.title }}">
+            <div class="card-meta">
                 <div class="title">{{ m.title }}</div>
                 {% if m.year %}<div class="sub">{{ m.year }}</div>{% endif %}
             </div>
@@ -26,4 +21,4 @@
     </div>
 </div>
 
-{% endblock %}
+{% include "partials/_footer.html" %}

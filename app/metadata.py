@@ -1,8 +1,9 @@
 # app/metadata.py
 from __future__ import annotations
+import re
 import time
 import logging
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 import requests
 from sqlalchemy import select
@@ -14,7 +15,9 @@ from .utils import normalize_sort
 log = logging.getLogger("scanner")
 
 TMDB_API = "https://api.themoviedb.org/3"
-IMG_BASE = "https://image.tmdb.org/t/p"   # use /w342, /w500, /original, etc.
+IMG_BASE = "https://image.tmdb.org/t/p"   # /w342, /w500, /original, etc.
+
+# -------- helpers: images & http --------
 
 def _img(url_part: Optional[str], size: str = "w500") -> Optional[str]:
     if not url_part:
@@ -22,28 +25,96 @@ def _img(url_part: Optional[str], size: str = "w500") -> Optional[str]:
     return f"{IMG_BASE}/{size}{url_part}"
 
 def _headers(api_key: str) -> Dict[str, str]:
+    # TMDB v4 tokens look like JWTs; v3 is a plain hex string.
     return {"Authorization": f"Bearer {api_key}"} if api_key.count(".") >= 2 else {}
 
 def _params(api_key: str) -> Dict[str, str]:
-    # supports both v4 bearer (preferred) and v3 ?api_key=
+    # support both v4 bearer and v3 ?api_key=
     return {} if api_key.count(".") >= 2 else {"api_key": api_key}
 
 def _get(api_key: str, path: str, params: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    # tiny rate-limit cushion
-    time.sleep(0.11)
+    time.sleep(0.11)  # small cushion
     try:
-        r = requests.get(f"{TMDB_API}/{path}", headers=_headers(api_key), params={**_params(api_key), **params}, timeout=15)
+        q = {**_params(api_key), **params}
+        r = requests.get(f"{TMDB_API}/{path}", headers=_headers(api_key), params=q, timeout=15)
         if r.status_code == 429:
             time.sleep(0.6)
-            r = requests.get(f"{TMDB_API}/{path}", headers=_headers(api_key), params={**_params(api_key), **params}, timeout=15)
+            r = requests.get(f"{TMDB_API}/{path}", headers=_headers(api_key), params=q, timeout=15)
         r.raise_for_status()
         return r.json()
     except Exception as e:
         log.warning("TMDB GET %s failed: %s", path, e)
         return None
 
+# -------- helpers: title cleaning & matching --------
+
+# tokens we strip out of scene/release names
+_STOPWORDS = {
+    "1080p","2160p","720p","480p","4k","hdr","dv","dolby","vision",
+    "webrip","web-dl","web","bluray","brrip","dvdrip","hdtv","cam","ts","hdrip","remux","proper","repack",
+    "x264","x265","h264","h.264","h265","h.265","hevc","avc","xvid","divx","10bit","8bit",
+    "ac3","eac3","dd5","ddp","dd","dts","dts-hd","ma","truehd","atmos","aac","mp3","flac",
+    "subs","multi","dual","dl","enc","rip","sample","yify","rarbg","etrg","evo","joy","saon","flux","oft","ivy","lost","lama","bhdstudio","refraction","pir8","okaystopcrying","hallowed","chivaman","will1869","ethel","aoc","x0r","nan0","lootera","ptv","pmtp","ds4k","web","webdl","real","multi",
+    "1","2ch","5.1","7.1"
+}
+
+_token_re = re.compile(r"[.\-_\[\](){},]+|\s+")
+
+def _clean_title(title: str) -> str:
+    if not title:
+        return title
+    # replace separators with space
+    s = _token_re.sub(" ", title).lower()
+    parts: List[str] = []
+    for p in s.split():
+        # keep 4-digit years
+        if re.fullmatch(r"\d{4}", p):
+            parts.append(p)
+            continue
+        # drop stopwords and codec/source noise
+        if p in _STOPWORDS:
+            continue
+        # drop stray single letters/tokens
+        if len(p) == 1 and not p.isdigit():
+            continue
+        parts.append(p)
+    # collapse runs like "the 13th warrior hd ma5 1 avc" -> "the 13th warrior"
+    out = " ".join(parts).strip()
+    # dedupe spaces
+    out = re.sub(r"\s{2,}", " ", out)
+    return out
+
+def _norm_key(s: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", (s or "").lower())
+
+def _best_movie_match(results: List[Dict[str, Any]], q_title: str, year: Optional[int]) -> Optional[int]:
+    if not results:
+        return None
+    qk = _norm_key(q_title)
+    # prefer year match + strong title match
+    ranked: List[tuple[int, int]] = []  # (idx, score)
+    for i, r in enumerate(results):
+        t = r.get("title") or r.get("original_title") or ""
+        rk = _norm_key(t)
+        score = 0
+        if year and (r.get("release_date") or "").startswith(str(year)):
+            score += 3
+        if rk == qk:
+            score += 3
+        elif rk.startswith(qk) or qk.startswith(rk):
+            score += 2
+        # light boost for popularity to break ties
+        try:
+            score += int(float(r.get("popularity") or 0) > 20)
+        except Exception:
+            pass
+        ranked.append((i, score))
+    ranked.sort(key=lambda x: x[1], reverse=True)
+    return results[ranked[0][0]].get("id")
+
+# -------- packers --------
+
 def _pack_common(d: Dict[str, Any]) -> Dict[str, Any]:
-    # Shared fields for movie and tv detail payloads
     return {
         "tmdb_id": d.get("id"),
         "imdb_id": d.get("imdb_id"),  # movie only (None for tv)
@@ -92,16 +163,44 @@ def _pack_cast(credits: Dict[str, Any], limit: int = 12) -> Dict[str, Any]:
             deduped.append(c)
     return {"cast": cast, "crew": deduped}
 
+# -------- TMDB lookups --------
+
 async def _search_movie(api_key: str, title: str, year: Optional[int]) -> Optional[int]:
-    payload = _get(api_key, "search/movie", {"query": title, "year": year or ""})
-    for r in (payload or {}).get("results", []):
-        if year and r.get("release_date", "").startswith(str(year)):
-            return r.get("id")
-    return ((payload or {}).get("results") or [None])[0] and (payload["results"][0]["id"])
+    # try a few strategies
+    q1 = title
+    q2 = _clean_title(title)
+    payloads: List[Optional[Dict[str, Any]]] = []
+
+    for q, y in [(q1, year), (q2, year), (q2, None)]:
+        params = {"query": q, "include_adult": True}
+        if y:
+            params["year"] = y  # TMDB supports 'year' for simple filtering
+        payloads.append(_get(api_key, "search/movie", params))
+
+        if payloads[-1] and payloads[-1].get("results"):
+            mid = _best_movie_match(payloads[-1]["results"], q, y)
+            if mid:
+                return mid
+
+    # last-ditch: search multi and filter to movie
+    multi = _get(api_key, "search/multi", {"query": q2 or q1, "include_adult": True})
+    if multi:
+        movies = [r for r in (multi.get("results") or []) if r.get("media_type") == "movie"]
+        mid = _best_movie_match(movies, q2 or q1, year)
+        if mid:
+            return mid
+
+    log.info("TMDB miss for title='%s' year=%s (q2='%s')", title, year, q2)
+    return None
 
 async def _search_tv(api_key: str, title: str) -> Optional[int]:
-    payload = _get(api_key, "search/tv", {"query": title})
-    return ((payload or {}).get("results") or [None])[0] and (payload["results"][0]["id"])
+    q1 = title
+    q2 = _clean_title(title)
+    for q in (q1, q2):
+        payload = _get(api_key, "search/tv", {"query": q, "include_adult": True})
+        if payload and payload.get("results"):
+            return payload["results"][0]["id"]
+    return None
 
 async def _movie_detail_pack(api_key: str, tmdb_id: int) -> Dict[str, Any]:
     d = _get(api_key, f"movie/{tmdb_id}", {"append_to_response": "credits,releases"})
@@ -156,8 +255,21 @@ async def _episode_detail_pack(api_key: str, show_id: int, season: int, episode:
         ],
     }
 
-async def enrich_library(session: AsyncSession, api_key: str, library_id: str, limit: int = 1000) -> Dict[str, int]:
-    """Populate MediaItem.extra_json (and poster/backdrop columns). Safe to re-run."""
+# -------- public: enrich --------
+
+async def enrich_library(
+    session: AsyncSession,
+    api_key: str,
+    library_id: str,
+    limit: int = 2000,
+    force: bool = False,
+    only_missing: bool = False,
+) -> Dict[str, int]:
+    """
+    Populate MediaItem.extra_json with TMDB data.
+    - force=True: ignore existing tmdb_id and re-match
+    - only_missing=True: process items that lack poster/backdrop even if tmdb_id is present
+    """
     if not api_key:
         log.info("TMDB_API_KEY not set; skipping enrichment")
         return {"matched": 0, "skipped": 0, "episodes": 0}
@@ -171,20 +283,25 @@ async def enrich_library(session: AsyncSession, api_key: str, library_id: str, l
     )).scalars().all()
 
     matched = skipped = ep_filled = 0
+
     tv_id_cache: Dict[str, int] = {}
 
     for it in items[:limit]:
         data = dict(it.extra_json or {})
         already = bool(data.get("tmdb_id"))
 
-        # Movies
+        # movies
         if it.kind == MediaKind.movie:
-            if not already:
+            needs_poster = not (data.get("poster") or it.poster_url)
+            should_enrich = force or (not already) or (only_missing and needs_poster)
+
+            if should_enrich:
                 tmdb_id = await _search_movie(api_key, it.title, it.year)
                 if not tmdb_id:
                     skipped += 1
                     continue
                 data.update(await _movie_detail_pack(api_key, tmdb_id))
+                # canonicalize title/year
                 if data.get("title"):
                     it.title = data["title"]
                     it.sort_title = normalize_sort(it.title)
@@ -194,15 +311,18 @@ async def enrich_library(session: AsyncSession, api_key: str, library_id: str, l
                         it.year = int(y)
                 it.extra_json = data
                 matched += 1
-            if data.get("poster") and not it.poster_url:
-                it.poster_url = data["poster"]
-            if data.get("backdrop") and not it.backdrop_url:
-                it.backdrop_url = data["backdrop"]
 
-        # Shows
+            # write-through to columns if present
+            if data.get("poster") and not it.poster_url:
+                it.poster_url = data.get("poster")
+            if data.get("backdrop") and not it.backdrop_url:
+                it.backdrop_url = data.get("backdrop")
+
+        # tv show / season / episode
         elif it.kind == MediaKind.show:
+            needs_poster = not (data.get("poster") or it.poster_url)
             tmdb_id = data.get("tmdb_id") if already else None
-            if not tmdb_id:
+            if force or (not tmdb_id) or (only_missing and needs_poster):
                 tmdb_id = await _search_tv(api_key, it.title)
                 if not tmdb_id:
                     skipped += 1
@@ -210,22 +330,20 @@ async def enrich_library(session: AsyncSession, api_key: str, library_id: str, l
                 data.update(await _tv_detail_pack(api_key, tmdb_id))
                 it.extra_json = data
                 matched += 1
-            tv_id_cache[it.id] = tmdb_id
+            tv_id_cache[it.id] = tmdb_id or data.get("tmdb_id")
             if data.get("poster") and not it.poster_url:
-                it.poster_url = data["poster"]
+                it.poster_url = data.get("poster")
             if data.get("backdrop") and not it.backdrop_url:
-                it.backdrop_url = data["backdrop"]
+                it.backdrop_url = data.get("backdrop")
 
-        # Seasons
         elif it.kind == MediaKind.season:
-            if "season_number" not in data:
+            if "season_number" not in data and (it.title or "").lower().startswith("season"):
                 try:
                     data["season_number"] = int((it.title or "").split()[-1])
                 except Exception:
                     pass
             it.extra_json = data
 
-        # Episodes
         elif it.kind == MediaKind.episode:
             se = dict(it.extra_json or {})
             season_no = se.get("season")
