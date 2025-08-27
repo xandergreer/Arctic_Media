@@ -25,7 +25,7 @@ if sys.platform.startswith("win"):
 
 # ── Stdlib / FastAPI / SQLA ───────────────────────────────────────────────────
 import os, time, secrets, re
-from fastapi import FastAPI, Request, Depends
+from fastapi import FastAPI, Request, Depends, HTTPException
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -175,7 +175,29 @@ async def home(request: Request, db: AsyncSession = Depends(get_db), user = Depe
 
 @app.get("/health")
 async def health_check():
-    return {"status": "ok"}
+    """Health check endpoint"""
+    return {"status": "healthy", "service": "arctic-media"}
+
+@app.get("/settings")
+async def settings_page(request: Request, user = Depends(get_current_user)):
+    """Main settings page - redirects to general settings"""
+    return RedirectResponse(url="/settings/general")
+
+@app.get("/settings/{panel}")
+async def settings_panel(
+    panel: str, 
+    request: Request, 
+    user = Depends(get_current_user)
+):
+    """Settings panel pages"""
+    valid_panels = ["general", "libraries", "remote", "transcoder", "users", "tasks"]
+    if panel not in valid_panels:
+        raise HTTPException(404, "Settings panel not found")
+    
+    return request.app.state.templates.TemplateResponse(
+        "settings_shell.html", 
+        {"request": request, "panel": panel}
+    )
 
 @app.get("/login", response_class=HTMLResponse)
 async def login_page(request: Request):
