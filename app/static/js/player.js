@@ -1,89 +1,245 @@
-// static/js/player.js
+// /static/js/player.js
 (() => {
-    const v = document.getElementById('player');
-    if (!v) return;
+    const HLS_LOCAL = "/static/js/vendor/hls.min.js";
 
-    // Key used for localStorage resume
-    // Fall back to src if we don't have a file-id data attribute
-    const fileKey = (v.dataset.fileId || v.currentSrc || v.src || '').replace(/\W+/g, ':');
-    const POS_KEY = `ams:pos:${fileKey}`;
-    const VOL_KEY = `ams:vol`;
+    // tiny helpers
+    const $ = (sel, ctx = document) => ctx.querySelector(sel);
+    const $$ = (sel, ctx = document) => Array.from(ctx.querySelectorAll(sel));
+    const log = (...a) => { try { console.log("[player]", ...a); } catch { } };
+    const warn = (...a) => { try { console.warn("[player]", ...a); } catch { } };
 
-    // Resume position
-    try {
-        const last = parseFloat(localStorage.getItem(POS_KEY) || 'NaN');
-        if (!Number.isNaN(last) && last > 1) {
-            v.currentTime = last;
+    // load hls.js from your local copy
+    function loadHls() {
+        return new Promise((resolve, reject) => {
+            if (window.Hls) return resolve(window.Hls);
+            const s = document.createElement("script");
+            s.src = HLS_LOCAL;
+            s.async = true;
+            s.onload = () => resolve(window.Hls);
+            s.onerror = () => reject(new Error("Failed to load hls.min.js"));
+            document.head.appendChild(s);
+        });
+    }
+
+    function supportsNativeHls(video) {
+        const t = video?.canPlayType?.("application/vnd.apple.mpegurl");
+        return !!(t && t !== "");
+    }
+
+    // ── UI helpers
+    function openPlayerUI() {
+        const wrap = $("#playerWrap");
+        if (wrap) {
+            wrap.classList.remove("collapsed");
+            wrap.classList.add("expanded");
         }
-    } catch { }
+    }
+    function closePlayerUI() {
+        const wrap = $("#playerWrap");
+        const video = $("#plyr") || $("video");
+        if (video) {
+            try { if (video._hls) video._hls.destroy(); } catch { }
+            video._hls = null;
+            try { video.removeAttribute("src"); video.load(); } catch { }
+        }
+        if (wrap) {
+            wrap.classList.add("collapsed");
+            wrap.classList.remove("expanded", "mini");
+        }
+    }
+    window.closePlayer = closePlayerUI;
 
-    // Restore volume
-    try {
-        const vol = parseFloat(localStorage.getItem(VOL_KEY) || 'NaN');
-        if (!Number.isNaN(vol)) v.volume = Math.min(1, Math.max(0, vol));
-    } catch { }
+    // Keep one Plyr instance
+    let plyr = null;
+    function ensurePlyr(video) {
+        if (window.Plyr && !plyr) {
+            plyr = new Plyr(video, {
+                controls: [
+                    "play-large", "play", "progress", "current-time", "duration",
+                    "mute", "volume", "captions", "settings", "pip", "airplay", "fullscreen"
+                ],
+                ratio: "16:9",
+                clickToPlay: true
+            });
+        }
+        return plyr;
+    }
 
-    // Persist position every ~3s
-    let tLast = 0;
-    v.addEventListener('timeupdate', () => {
-        if (v.duration && v.currentTime > 0) {
-            const now = performance.now();
-            if (now - tLast > 3000) {
-                tLast = now;
-                localStorage.setItem(POS_KEY, String(v.currentTime));
+    // ── main attach/play
+    async function attachAndPlay({ video, m3u8, mp4 }) {
+        if (!video) return;
+        ensurePlyr(video);
+
+        // improve autoplay chances on first gesture
+        if (video.paused && video.currentTime === 0) video.muted = true;
+
+        const native = supportsNativeHls(video);
+        if (!native) {
+            try {
+                const Hls = await loadHls();
+                if (Hls && Hls.isSupported()) {
+                    if (video._hls) { try { video._hls.destroy(); } catch { } video._hls = null; }
+
+                    const hls = new Hls({
+                        lowLatencyMode: false,
+                        backBufferLength: 30,
+                        maxBufferLength: 20,
+                        maxMaxBufferLength: 60,
+                        fragLoadingMaxRetry: 2,
+                        manifestLoadingMaxRetry: 2,
+                        enableWorker: true,
+                        // Better codec handling
+                        forceKeyFrameOnDiscontinuity: true,
+                        abrEwmaDefaultEstimate: 500000,
+                        abrBandWidthFactor: 0.95,
+                        abrBandWidthUpFactor: 0.7,
+                        abrMaxWithRealBitrate: true
+                    });
+
+                    hls.on(Hls.Events.ERROR, (_evt, data) => {
+                        warn("HLS error", data);
+
+                        // Handle specific codec errors
+                        if (data?.details === "bufferAppendError" || data?.details === "bufferAddCodecError") {
+                            warn("Codec compatibility issue, trying fallback");
+                            try {
+                                hls.destroy();
+                            } catch { }
+                            video._hls = null;
+
+                            // Try MP4 fallback immediately
+                            if (mp4) {
+                                video.src = mp4;
+                                video.load();
+                                video.play().catch(() => { });
+                            }
+                            return;
+                        }
+
+                        // common bufferAppendError → flush & retry once
+                        if (data?.details === "bufferAppendError") {
+                            try { hls.stopLoad(); hls.startLoad(hls.media?.currentTime || 0); } catch { }
+                            return;
+                        }
+
+                        if (data?.fatal) {
+                            try { hls.destroy(); } catch { }
+                            video._hls = null;
+                            if (mp4) {
+                                video.src = mp4;
+                                video.load();
+                                video.play().catch(() => { });
+                            }
+                        }
+                    });
+
+                    hls.loadSource(m3u8);
+                    hls.attachMedia(video);
+                    hls.on(Hls.Events.MANIFEST_PARSED, () => {
+                        try { hls.startLoad(0); } catch { }
+                        video.play().catch(() => { });
+                    });
+
+                    video._hls = hls;
+                    return;
+                }
+            } catch (e) {
+                warn("Failed to init hls.js:", e);
             }
         }
-    });
 
-    v.addEventListener('ended', () => {
-        try { localStorage.removeItem(POS_KEY); } catch { }
-    });
+        // Native HLS (Safari/iOS)
+        if (native) {
+            video.src = m3u8;
+            video.load();
+            await video.play().catch(() => { });
+            return;
+        }
 
-    v.addEventListener('volumechange', () => {
-        try { localStorage.setItem(VOL_KEY, String(v.volume)); } catch { }
-    });
+        // Final fallback: progressive MP4
+        if (mp4) {
+            video.src = mp4;
+            video.load();
+            await video.play().catch(() => { });
+        }
+    }
 
-    // Keyboard shortcuts
-    document.addEventListener('keydown', (e) => {
-        // ignore if typing in inputs
-        const tag = (document.activeElement && document.activeElement.tagName) || '';
-        if (['INPUT', 'TEXTAREA'].includes(tag)) return;
+    // ── high level
+    async function playItem(fileId, title = "") {
+        const video = $("#plyr") || $("video");
+        const npTitle = $("#npTitle");
+        if (!video || !fileId) return;
 
-        // space toggles play/pause
-        if (e.code === 'Space') {
-            e.preventDefault();
-            if (v.paused) v.play().catch(() => { }); else v.pause();
-        }
-        // left/right arrows seek
-        if (e.code === 'ArrowRight') {
-            v.currentTime = Math.min((v.currentTime || 0) + 10, v.duration || 1e12);
-        }
-        if (e.code === 'ArrowLeft') {
-            v.currentTime = Math.max((v.currentTime || 0) - 10, 0);
-        }
-        // up/down volume
-        if (e.code === 'ArrowUp') {
-            e.preventDefault();
-            v.volume = Math.min(1, (v.volume || 0) + 0.05);
-        }
-        if (e.code === 'ArrowDown') {
-            e.preventDefault();
-            v.volume = Math.max(0, (v.volume || 0) - 0.05);
-        }
-        // M to mute
-        if (e.key.toLowerCase() === 'm') {
-            v.muted = !v.muted;
-        }
-        // F for fullscreen
-        if (e.key.toLowerCase() === 'f') {
-            if (!document.fullscreenElement) v.requestFullscreen?.();
-            else document.exitFullscreen?.();
-        }
-    });
+        if (npTitle) npTitle.textContent = title || "";
 
-    // Double-click toggles fullscreen
-    v.addEventListener('dblclick', () => {
-        if (!document.fullscreenElement) v.requestFullscreen?.();
-        else document.exitFullscreen?.();
+        const direct = `/stream/${encodeURIComponent(fileId)}/direct`;  // Fastest - direct file
+        const m3u8 = `/stream/${encodeURIComponent(fileId)}/master.m3u8?container=fmp4`;  // HLS
+        const mp4 = `/stream/${encodeURIComponent(fileId)}/auto`;  // Progressive fallback
+
+        log("playItem", { fileId, direct, m3u8, mp4, title });
+
+        // Try direct file first (fastest)
+        try {
+            const response = await fetch(direct, { method: 'HEAD' });
+            if (response.ok) {
+                video.src = direct;
+                video.load();
+                await video.play().catch(() => { });
+                openPlayerUI();
+                return;
+            }
+        } catch (e) {
+            log("Direct file not available, trying HLS");
+        }
+
+        // Fall back to HLS
+        await attachAndPlay({ video, m3u8, mp4 });
+        openPlayerUI();
+    }
+    window.playItem = playItem;
+
+    function wirePage() {
+        // buttons & selectors
+        const playBtn = $("#playBtn");
+        playBtn?.addEventListener("click", () => {
+            const id = playBtn.dataset.fileId || playBtn.getAttribute("data-file-id");
+            const title = playBtn.dataset.title || "";
+            if (id) playItem(id, title);
+        });
+
+        $$(".ep-card[data-file-id]").forEach(btn => {
+            btn.addEventListener("click", () => {
+                playItem(btn.getAttribute("data-file-id"), btn.getAttribute("data-title") || "");
+            });
+        });
+
+        const sel = $("#sourceSelect");
+        if (sel) {
+            sel.addEventListener("change", () => {
+                const opt = sel.options[sel.selectedIndex];
+                const id = opt?.dataset?.fileId || opt?.value;
+                const title = (opt?.textContent || "").trim();
+                if (id) playItem(id, title);
+            });
+        }
+
+        $("#minBtn")?.addEventListener("click", () => {
+            const wrap = $("#playerWrap"); if (!wrap) return;
+            wrap.classList.toggle("mini");
+            wrap.classList.toggle("expanded");
+        });
+        $("#closeBtn")?.addEventListener("click", closePlayerUI);
+
+        // auto-boot if the <video> carries a file id
+        const v = $("#plyr") || $("video");
+        const bootId = v?.dataset?.fileId || v?.getAttribute?.("data-file-id");
+        const bootTitle = v?.dataset?.title || "";
+        if (bootId) playItem(bootId, bootTitle);
+    }
+
+    document.addEventListener("DOMContentLoaded", () => {
+        const video = $("#plyr");
+        if (video && window.Plyr) ensurePlyr(video);
+        wirePage();
     });
 })();

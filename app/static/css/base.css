@@ -204,3 +204,67 @@ a:hover {
     object-fit: cover;
     width: 100%;
 }
+
+/* Sidebar + backdrop: don't intercept clicks when closed */
+.sidebar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    width: 280px;
+    transform: translateX(-100%);
+    transition: transform .25s ease;
+    z-index: 1000;
+}
+
+.sidebar[aria-hidden="false"] {
+    transform: translateX(0);
+}
+
+/* Backdrop sits behind the sidebar, only interactive when sidebar is open */
+#sidebar-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, .5);
+    opacity: 0;
+    pointer-events: none;
+    /* <- key line so it can't block clicks when hidden */
+    z-index: 999;
+}
+
+/* When the sidebar is open, enable the backdrop */
+.sidebar[aria-hidden="false"]~#sidebar-backdrop {
+    opacity: 1;
+    pointer-events: auto;
+}
+
+/* Header layout guardrails */
+.nav-inner {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.nav .brand {
+    display: inline-flex;
+    align-items: center;
+    margin-left: 12px;
+    /* nudge right, adjust if you like */
+    flex: 0 0 auto;
+    z-index: 1;
+    /* keep it above the header bg, not above nav */
+}
+
+.nav .brand img {
+    display: block;
+    height: 24px;
+    /* adjust to taste */
+    width: auto;
+}
+
+.nav .cluster {
+    display: flex;
+    gap: 14px;
+    margin-left: auto;
+    /* pushes links to the right */
+}

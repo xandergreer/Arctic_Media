@@ -2,40 +2,39 @@
 {% block title %}{{ item.title }} – Arctic{% endblock %}
 
 {% block content %}
+{% set ej = item.extra_json or {} %}
+{% set poster = ej.get('poster') or item.poster_url or '/static/img/placeholder.png' %}
+{% set backdrop = ej.get('backdrop') or item.backdrop_url or '' %}
+
 <div class="page show-detail">
-    <!-- Hero -->
-    <div class="hero" style="--bg:url('{{ (item.extra_json or {}).get('backdrop') or (item.backdrop_url or '') }}')">
-        <div class="poster">
-            <img src="{{ (item.extra_json or {}).get('poster') or item.poster_url or '/static/img/placeholder.png' }}"
-                alt="{{ item.title }}">
-        </div>
+    <div class="hero" style="--bg:url('{{ backdrop }}')">
+        <div class="poster"><img src="{{ poster }}" alt="{{ item.title }}"></div>
         <div class="meta">
             <h1 class="title">{{ item.title }}</h1>
-            {% set ej = item.extra_json or {} %}
             <div class="tagline muted">{% if item.year %}{{ item.year }} · {% endif %}TV Series</div>
             {% if ej.get('overview') %}<p class="hero-overview">{{ ej['overview'] }}</p>{% endif %}
             <div class="actions">
                 {% if first_play_file_id %}
-                <button id="playBtn" class="btn primary" data-file="{{ first_play_file_id }}">▶ Play</button>
+                <button id="playBtn" class="btn primary" data-file-id="{{ first_play_file_id }}"
+                    data-title="{{ item.title|e }}">▶ Play</button>
                 {% endif %}
                 <a class="btn" href="/tv">Back to TV</a>
             </div>
         </div>
     </div>
 
-    <!-- Collapsible player -->
+    <!-- Player -->
     <section class="player-wrap collapsed" id="playerWrap">
         <div class="player-bar">
             <div class="left"><strong>Now Playing:</strong> <span id="npTitle">{{ item.title }}</span></div>
             <div class="right">
-                <select id="sourceSelect" class="select"></select>
-                <button id="minBtn" class="btn small">–</button>
-                <button id="closeBtn" class="btn small">✕</button>
+                <button id="minBtn" class="btn small" title="Minimize">–</button>
+                <button id="closeBtn" class="btn small" title="Close">✕</button>
             </div>
         </div>
         <div class="player-area">
-            <video id="plyr" playsinline controls preload="metadata"
-                poster="{{ ej.get('poster') or item.poster_url or '/static/img/placeholder.png' }}"></video>
+            <video id="plyr" playsinline controls preload="metadata" poster="{{ poster }}" {% if first_play_file_id
+                %}data-file-id="{{ first_play_file_id }}" data-title="{{ item.title|e }}" {% endif %}></video>
         </div>
     </section>
 
@@ -44,7 +43,7 @@
     <div class="grid">
         {% for season in seasons %}
         {% set sej = season.extra_json or {} %}
-        {% set sposter = sej.get('poster') or season.poster_url or '/static/img/placeholder.png' %}
+        {% set sposter = sej.get('poster') or season.poster_url or poster %}
         <a class="card" href="/show/{{ item.id }}/season/{{ loop.index }}">
             <img loading="lazy" src="{{ sposter }}" alt="{{ season.title }}">
             <div class="card-meta">
@@ -61,14 +60,14 @@
     <div class="grid">
         {% for ep in episodes %}
         {% set eej = ep.extra_json or {} %}
-        {% set still = eej.get('still') or ep.poster_url or '/static/img/placeholder.png' %}
-        <div class="card ep-card" data-file="{{ ep.first_file_id }}" title="{{ ep.title }}">
+        {% set still = eej.get('still') or ep.poster_url or poster %}
+        <button class="card ep-card" type="button" data-file-id="{{ ep.first_file_id }}" data-title="{{ ep.title|e }}">
             <img loading="lazy" src="{{ still }}" alt="{{ ep.title }}">
             <div class="card-meta">
                 <div class="title">{{ "%02d" % (eej.get('episode') or loop.index) }} · {{ ep.title }}</div>
                 {% if eej.get('air_date') %}<div class="sub">{{ eej['air_date'] }}</div>{% endif %}
             </div>
-        </div>
+        </button>
         {% endfor %}
     </div>
     {% endif %}
@@ -76,43 +75,7 @@
 
 <link rel="stylesheet" href="https://cdn.plyr.io/3.7.8/plyr.css">
 <script src="https://cdn.plyr.io/3.7.8/plyr.polyfilled.js" nonce="{{ request.state.csp_nonce }}"></script>
-
-<script nonce="{{ request.state.csp_nonce }}">
-    (function () {
-        const wrap = document.getElementById('playerWrap');
-        const playBtn = document.getElementById('playBtn');
-        const minBtn = document.getElementById('minBtn');
-        const closeBtn = document.getElementById('closeBtn');
-        const npTitle = document.getElementById('npTitle');
-
-        const video = document.getElementById('plyr');
-        const player = new Plyr(video, { ratio: '16:9', seekTime: 10 });
-
-        function loadSource(url, fileId, title) {
-            player.source = { type: 'video', sources: [{ src: url, type: 'video/mp4' }] };
-            npTitle.textContent = title || '';
-            wrap.classList.remove('collapsed'); wrap.classList.add('expanded');
-        }
-        function closePlayer() { try { player.pause(); } catch { } wrap.classList.add('collapsed'); wrap.classList.remove('expanded', 'mini'); }
-
-        playBtn?.addEventListener('click', () => {
-            const fid = playBtn.dataset.file;
-            loadSource(`/stream/${fid}/file`, fid, "{{ item.title }}");
-        });
-
-        document.querySelectorAll('.ep-card').forEach(card => {
-            card.addEventListener('click', () => {
-                const fid = card.dataset.file; if (!fid) return;
-                loadSource(`/stream/${fid}/file`, fid, card.querySelector('.title').textContent);
-            });
-        });
-
-        document.getElementById('minBtn')?.addEventListener('click', () => {
-            wrap.classList.toggle('mini'); wrap.classList.toggle('expanded');
-        });
-        document.getElementById('closeBtn')?.addEventListener('click', closePlayer);
-    })();
-</script>
+<script src="/static/js/player.js" nonce="{{ request.state.csp_nonce }}"></script>
 
 <style>
     .show-detail .hero {
@@ -121,22 +84,18 @@
         gap: 22px;
         padding: 20px;
         border-radius: 16px;
-        background: linear-gradient(to bottom, rgba(0, 0, 0, .45), rgba(0, 0, 0, .65)), var(--bg) center/cover no-repeat;
+        background: linear-gradient(to bottom, rgba(0, 0, 0, .45), rgba(0, 0, 0, .65)), var(--bg) center/cover no-repeat
     }
 
     .show-detail .poster img {
         width: 220px;
         border-radius: 12px;
-        box-shadow: 0 10px 24px rgba(0, 0, 0, .4);
+        box-shadow: 0 10px 24px rgba(0, 0, 0, .4)
     }
 
-    .show-detail .meta .title {
+    .show-detail .title {
         font-size: 28px;
-        margin: 0 0 6px;
-    }
-
-    .show-detail .actions .btn {
-        margin-right: 8px;
+        margin: 0 0 6px
     }
 
     .player-wrap {
@@ -144,12 +103,31 @@
         border: 1px solid rgba(255, 255, 255, .08);
         border-radius: 14px;
         background: #0e0e0f;
-        display: none;
+        display: none
     }
 
     .player-wrap.expanded,
     .player-wrap.mini {
-        display: block;
+        display: block
+    }
+
+    .player-bar {
+        display: grid;
+        grid-template-columns: 1fr auto;
+        align-items: center;
+        padding: 8px 10px;
+        background: #141418;
+        border-bottom: 1px solid rgba(255, 255, 255, .06)
+    }
+
+    .player-area {
+        padding: 10px
+    }
+
+    .player-area video {
+        width: 100%;
+        border-radius: 10px;
+        background: #000
     }
 
     .player-wrap.mini {
@@ -159,11 +137,26 @@
         width: 360px;
         max-width: 45vw;
         z-index: 50;
-        box-shadow: 0 10px 30px rgba(0, 0, 0, .5);
+        box-shadow: 0 10px 30px rgba(0, 0, 0, .5)
+    }
+
+    .player-wrap.mini .player-area video {
+        height: 200px;
+        object-fit: cover
     }
 
     .player-wrap.collapsed {
-        display: none;
+        display: none
+    }
+
+    .card.ep-card {
+        display: block;
+        text-align: left
+    }
+
+    .btn.primary {
+        background: var(--primary);
+        color: #fff
     }
 </style>
 {% endblock %}

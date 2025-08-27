@@ -77,3 +77,62 @@
             (friends ? section('Friends', '') + friends : '');
     }
 })();
+
+(function () {
+    async function ensureHls() {
+        if (window.Hls) return true;
+        await new Promise((res, rej) => {
+            const s = document.createElement("script");
+            s.src = "https://cdn.jsdelivr.net/npm/hls.js@latest";
+            s.onload = res; s.onerror = rej; document.head.appendChild(s);
+        });
+        return !!window.Hls;
+    }
+
+    async function playItem(fileId) {
+        const video = document.getElementById("player") || document.querySelector("video");
+        if (!video || !fileId) return;
+        const m3u8 = `/stream/${encodeURIComponent(fileId)}/master.m3u8?container=fmp4`;
+        const mp4 = `/stream/${encodeURIComponent(fileId)}/auto`;
+
+        try {
+            if (await ensureHls() && window.Hls.isSupported()) {
+                if (video._hls) { try { video._hls.destroy(); } catch { } }
+                const hls = new window.Hls({ lowLatencyMode: false, backBufferLength: 30 });
+                hls.on(window.Hls.Events.ERROR, (_e, d) => {
+                    if (d?.fatal) { try { hls.destroy(); } catch { }; video._hls = null; video.src = mp4; video.play().catch(() => { }); }
+                });
+                hls.loadSource(m3u8);
+                hls.attachMedia(video);
+                video._hls = hls;
+                video.removeAttribute("src");
+                await video.play().catch(() => { });
+                return;
+            }
+        } catch { }
+
+        if (video.canPlayType("application/vnd.apple.mpegurl")) {
+            video.src = m3u8; video.play().catch(() => { });
+        } else {
+            video.src = mp4; video.play().catch(() => { });
+        }
+    }
+
+    // expose for buttons like <a data-file-id="...">
+    window.playItem = playItem;
+
+    document.addEventListener("DOMContentLoaded", () => {
+        // auto-boot if <video id="player" data-file-id="...">
+        const v = document.getElementById("player");
+        const bootId = v?.dataset?.fileId;
+        if (bootId) playItem(bootId);
+
+        // wire clickable cards/buttons
+        document.querySelectorAll("[data-file-id]").forEach(el => {
+            el.addEventListener("click", (e) => {
+                e.preventDefault();
+                playItem(el.getAttribute("data-file-id"));
+            });
+        });
+    });
+})();

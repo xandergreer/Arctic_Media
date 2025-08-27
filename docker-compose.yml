@@ -1,0 +1,35 @@
+version: '3.8'
+
+services:
+  arctic-media:
+    build: .
+    container_name: arctic-media
+    ports:
+      - "8000:8000"
+    volumes:
+      # Mount your media library
+      - ./media:/app/data:ro
+      # Mount database and transcode cache
+      - arctic-data:/app/data
+      - arctic-transcode:/app/transcode
+      # Optional: mount config
+      - ./config:/app/config
+    environment:
+      - ARCTIC_MEDIA_ROOT=/app/data
+      - ARCTIC_TRANSCODE_DIR=/app/transcode
+      - FFMPEG_BIN=ffmpeg
+      - FFMPEG_PRESET=veryfast
+      - HLS_SEG_DUR=2.0
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:8000/health', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+volumes:
+  arctic-data:
+    driver: local
+  arctic-transcode:
+    driver: local
