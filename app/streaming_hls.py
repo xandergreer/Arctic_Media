@@ -169,6 +169,32 @@ async def start_or_warm_job(src_path: Path, job: TranscodeJob) -> None:
     vcodec = (job.vcodec or "copy").lower()
     acodec = (job.acodec or "aac").lower()
 
+    # Check if source is x265/HEVC - if so, always transcode to H.264
+    # For x265 files, we need to transcode to ensure browser compatibility
+    if vcodec == "copy":
+        # Try to detect x265/HEVC source and force transcode
+        try:
+            probe_cmd = [
+                ffmpeg_exe(), "-v", "quiet", "-select_streams", "v:0", 
+                "-show_entries", "stream=codec_name", "-of", "csv=p=0", str(src_path)
+            ]
+            proc = await asyncio.create_subprocess_exec(
+                *probe_cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+            )
+            stdout, _ = await proc.communicate()
+            codec_name = stdout.decode().strip().lower()
+            
+            # Force transcode for x265/HEVC sources
+            if codec_name in ["hevc", "h265", "x265"]:
+                log.info(f"Detected x265/HEVC source ({codec_name}), forcing H.264 transcode for compatibility")
+                vcodec = "h264"
+                # Update the job's vcodec to reflect the change
+                job.vcodec = "h264"
+            else:
+                log.info(f"Source codec is {codec_name}, using copy mode")
+        except Exception as e:
+            log.warning(f"Could not detect video codec, proceeding with {vcodec}: {e}")
+
     base = [
         ffmpeg_exe(), "-hide_banner", "-nostdin", "-y",
         "-fflags", "+genpts+discardcorrupt",  # Discard corrupt frames for faster processing
@@ -180,17 +206,21 @@ async def start_or_warm_job(src_path: Path, job: TranscodeJob) -> None:
         "-avoid_negative_ts", "make_zero",  # Handle timestamp issues
     ]
 
-    # Always use H.264 for maximum browser compatibility
-    vpart = [
-        "-c:v", "h264",
-        "-preset", os.getenv("FFMPEG_PRESET", "ultrafast"),  # Fastest preset for real-time transcoding
-        "-g", str(job.gop), "-keyint_min", str(job.gop),
-        "-force_key_frames", f"expr:gte(t,n_forced*{job.seg_dur})",
-        "-profile:v", "baseline", "-level", "3.1", "-pix_fmt", "yuv420p",  # Lower profile for faster encoding
-        "-crf", "28",  # Lower quality for faster encoding
-        "-tune", "fastdecode",  # Optimize for fast decoding
-        "-threads", "0",  # Use all available CPU threads
-    ]
+    # Use H.264 for maximum browser compatibility
+    if vcodec == "h264":
+        vpart = [
+            "-c:v", "h264",
+            "-preset", os.getenv("FFMPEG_PRESET", "ultrafast"),  # Fastest preset for real-time transcoding
+            "-g", str(job.gop), "-keyint_min", str(job.gop),
+            "-force_key_frames", f"expr:gte(t,n_forced*{job.seg_dur})",
+            "-profile:v", "baseline", "-level", "3.1", "-pix_fmt", "yuv420p",  # Lower profile for faster encoding
+            "-crf", "28",  # Lower quality for faster encoding
+            "-tune", "fastdecode",  # Optimize for fast decoding
+            "-threads", "0",  # Use all available CPU threads
+        ]
+    else:
+        # For copy mode, ensure we have compatible settings
+        vpart = ["-c:v", "copy"]
 
     # Ensure audio is always AAC for browser compatibility
     apart = [
@@ -224,7 +254,7 @@ async def start_or_warm_job(src_path: Path, job: TranscodeJob) -> None:
             hls = ["-bsf:v", "h264_mp4toannexb", *hls]
 
     cmd = [*base, *vpart, *apart, *hls, m3u8_out]
-    log.info("ffmpeg cwd=%s cmd=%s", job.workdir, " ".join(shlex.quote(x) for x in cmd))
+    log.info("ffmpeg cwd=%s vcodec=%s cmd=%s", job.workdir, vcodec, " ".join(shlex.quote(x) for x in cmd))
 
     job.proc = await asyncio.create_subprocess_exec(
         *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, cwd=str(job.workdir)
@@ -267,12 +297,39 @@ async def debug_file_info(
     # Check if it's a compatible format for direct serving
     direct_compatible = suffix in ['.mp4', '.webm', '.ogg']
     
+    # Get detailed codec info
+    codec_info = {}
+    try:
+        probe_cmd = [
+            ffmpeg_exe(), "-v", "quiet", 
+            "-select_streams", "v:0", 
+            "-show_entries", "stream=codec_name,codec_type,width,height,bit_rate", 
+            "-of", "json", str(src_path)
+        ]
+        proc = await asyncio.create_subprocess_exec(
+            *probe_cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+        )
+        stdout, _ = await proc.communicate()
+        import json
+        codec_info = json.loads(stdout.decode())
+    except Exception as e:
+        codec_info = {"error": str(e)}
+    
+    # Check if it's x265/HEVC
+    is_x265 = False
+    if "streams" in codec_info and codec_info["streams"]:
+        video_stream = codec_info["streams"][0]
+        codec_name = video_stream.get("codec_name", "").lower()
+        is_x265 = codec_name in ["hevc", "h265", "x265"]
+    
     return {
         "file_id": item_id,
         "path": str(src_path),
         "size": stat.st_size,
         "suffix": suffix,
         "direct_compatible": direct_compatible,
+        "is_x265": is_x265,
+        "codec_info": codec_info,
         "exists": True
     }
 
@@ -289,6 +346,48 @@ async def direct_file_head(item_id: str, request: Request, db: AsyncSession = De
 
     # Check if file is already browser-compatible
     if src_path.suffix.lower() in ['.mp4', '.webm', '.ogg']:
+        # For MP4 files, check if they contain browser-compatible codecs
+        if src_path.suffix.lower() == '.mp4':
+            try:
+                probe_cmd = [
+                    ffmpeg_exe(), "-v", "quiet", "-select_streams", "v:0", 
+                    "-show_entries", "stream=codec_name", "-of", "csv=p=0", str(src_path)
+                ]
+                proc = await asyncio.create_subprocess_exec(
+                    *probe_cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+                )
+                stdout, stderr = await proc.communicate()
+                
+                if proc.returncode != 0:
+                    log.warning(f"Direct serving: ffprobe failed with return code {proc.returncode}, stderr: {stderr.decode()}")
+                    raise HTTPException(404, "Direct serving not available for this format")
+                
+                codec_name = stdout.decode().strip().lower()
+                log.info(f"Direct serving: detected codec '{codec_name}' for {src_path.name}")
+                
+                # Only allow H.264 for direct serving (x265/HEVC needs transcoding)
+                if codec_name in ["h264", "avc"]:
+                    log.info(f"Direct serving: allowing H.264 file {src_path.name}")
+                    return Response(
+                        status_code=200,
+                        headers={
+                            "Content-Type": "video/mp4",
+                            "Content-Length": str(src_path.stat().st_size),
+                            "Accept-Ranges": "bytes"
+                        }
+                    )
+                else:
+                    log.info(f"Direct serving: rejecting {codec_name} file {src_path.name} (needs transcoding)")
+                    raise HTTPException(404, "Direct serving not available for this format")
+            except HTTPException:
+                # Re-raise HTTP exceptions
+                raise
+            except Exception as e:
+                log.warning(f"Direct serving: codec detection failed for {src_path.name}: {e}")
+                # If we can't detect the codec, reject the file to be safe
+                raise HTTPException(404, "Direct serving not available for this format")
+        
+        # For other formats, allow direct serving
         return Response(
             status_code=200,
             headers={
@@ -315,6 +414,48 @@ async def direct_file_serve(
 
     # Check if file is already browser-compatible
     if src_path.suffix.lower() in ['.mp4', '.webm', '.ogg']:
+        # For MP4 files, check if they contain browser-compatible codecs
+        if src_path.suffix.lower() == '.mp4':
+            try:
+                probe_cmd = [
+                    ffmpeg_exe(), "-v", "quiet", "-select_streams", "v:0", 
+                    "-show_entries", "stream=codec_name", "-of", "csv=p=0", str(src_path)
+                ]
+                proc = await asyncio.create_subprocess_exec(
+                    *probe_cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+                )
+                stdout, stderr = await proc.communicate()
+                
+                if proc.returncode != 0:
+                    log.warning(f"Direct serving GET: ffprobe failed with return code {proc.returncode}, stderr: {stderr.decode()}")
+                    raise HTTPException(404, "Direct serving not available for this format")
+                
+                codec_name = stdout.decode().strip().lower()
+                log.info(f"Direct serving GET: detected codec '{codec_name}' for {src_path.name}")
+                
+                # Only allow H.264 for direct serving (x265/HEVC needs transcoding)
+                if codec_name in ["h264", "avc"]:
+                    log.info(f"Direct serving GET: allowing H.264 file {src_path.name}")
+                    return FileResponse(
+                        src_path,
+                        media_type="video/mp4",
+                        headers={
+                            "Cache-Control": "public, max-age=3600",
+                            "Accept-Ranges": "bytes"
+                        }
+                    )
+                else:
+                    log.info(f"Direct serving GET: rejecting {codec_name} file {src_path.name} (needs transcoding)")
+                    raise HTTPException(404, "Direct serving not available for this format")
+            except HTTPException:
+                # Re-raise HTTP exceptions
+                raise
+            except Exception as e:
+                log.warning(f"Direct serving GET: codec detection failed for {src_path.name}: {e}")
+                # If we can't detect the codec, reject the file to be safe
+                raise HTTPException(404, "Direct serving not available for this format")
+        
+        # For other formats, allow direct serving
         return FileResponse(
             src_path,
             media_type="video/mp4" if src_path.suffix.lower() == '.mp4' else "video/webm",
@@ -384,26 +525,63 @@ async def start_progressive_job(src_path: Path, job: TranscodeJob) -> None:
 
     output_path = str(job.workdir / "output.mp4")
 
-    cmd = [
-        ffmpeg_exe(), "-hide_banner", "-nostdin", "-y",
-        "-i", str(src_path),
-        "-map", "0:v:0", "-map", "0:a:0?", "-map", "-0:s", "-dn", "-sn",
-        "-c:v", "h264",
-        "-preset", "veryfast",
-        "-profile:v", "high",
-        "-level", "4.1",
-        "-pix_fmt", "yuv420p",
-        "-g", "72",
-        "-keyint_min", "72",
-        "-sc_threshold", "0",
-        "-c:a", "aac",
-        "-ac", "2",
-        "-ar", "48000",
-        "-b:a", "160k",
-        "-movflags", "+faststart",
-        "-f", "mp4",
-        output_path
-    ]
+    # Check if source is x265/HEVC and force transcode
+    force_transcode = False
+    try:
+        probe_cmd = [
+            ffmpeg_exe(), "-v", "quiet", "-select_streams", "v:0", 
+            "-show_entries", "stream=codec_name", "-of", "csv=p=0", str(src_path)
+        ]
+        proc = await asyncio.create_subprocess_exec(
+            *probe_cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+        )
+        stdout, _ = await proc.communicate()
+        codec_name = stdout.decode().strip().lower()
+        
+        # Force transcode for x265/HEVC sources
+        if codec_name in ["hevc", "h265", "x265"]:
+            log.info("Progressive fallback: Detected x265/HEVC source, forcing H.264 transcode")
+            force_transcode = True
+    except Exception as e:
+        log.warning(f"Could not detect video codec for progressive fallback: {e}")
+        force_transcode = True  # Default to transcode if we can't detect
+
+    if force_transcode:
+        cmd = [
+            ffmpeg_exe(), "-hide_banner", "-nostdin", "-y",
+            "-i", str(src_path),
+            "-map", "0:v:0", "-map", "0:a:0?", "-map", "-0:s", "-dn", "-sn",
+            "-c:v", "h264",
+            "-preset", "veryfast",
+            "-profile:v", "high",
+            "-level", "4.1",
+            "-pix_fmt", "yuv420p",
+            "-g", "72",
+            "-keyint_min", "72",
+            "-sc_threshold", "0",
+            "-c:a", "aac",
+            "-ac", "2",
+            "-ar", "48000",
+            "-b:a", "160k",
+            "-movflags", "+faststart",
+            "-f", "mp4",
+            output_path
+        ]
+    else:
+        # Try remux first for compatible sources
+        cmd = [
+            ffmpeg_exe(), "-hide_banner", "-nostdin", "-y",
+            "-i", str(src_path),
+            "-map", "0:v:0", "-map", "0:a:0?", "-map", "-0:s", "-dn", "-sn",
+            "-c:v", "copy",
+            "-c:a", "aac",
+            "-ac", "2",
+            "-ar", "48000",
+            "-b:a", "160k",
+            "-movflags", "+faststart",
+            "-f", "mp4",
+            output_path
+        ]
 
     log.info("ffmpeg progressive cwd=%s cmd=%s", job.workdir, " ".join(shlex.quote(x) for x in cmd))
 
@@ -671,7 +849,11 @@ async def _cleanup_loop():
                     _ITEM_JOB.pop(job.item_id, None)
         except Exception:
             pass
-        await asyncio.sleep(15)
+        try:
+            await asyncio.sleep(15)
+        except asyncio.CancelledError:
+            # Clean shutdown when task is cancelled
+            break
 
 async def _emergency_cleanup():
     """Emergency cleanup to stop all ffmpeg processes and clear jobs"""
