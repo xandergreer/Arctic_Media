@@ -35,6 +35,10 @@
                     Shows</a>
                 <a href="/settings"
                     class="{{ 'active' if request.url.path.startswith('/settings') else '' }}">Settings</a>
+                {% if user and user.is_admin %}
+                <a href="/admin/settings"
+                    class="{{ 'active' if request.url.path.startswith('/admin/settings') else '' }}">Admin</a>
+                {% endif %}
                 <form action="/auth/logout" method="post" style="display:inline">
                     <button class="btn btn-ghost" type="submit">Logout</button>
                 </form>

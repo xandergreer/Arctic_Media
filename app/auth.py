@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from pydantic import BaseModel
 
 from .database import get_db
-from .models import User
+from .models import User, UserRole
 from .utils import hash_password, verify_password, create_token, decode_token, new_csrf
 from .config import settings
 
@@ -65,22 +65,18 @@ async def register(request: Request, db: AsyncSession = Depends(get_db)):
     if dup:
         raise HTTPException(400, "User exists")
 
+    # Check if this is the first user
+    is_first_user = await _first_user_is_admin(db)
+    
     user = User(
         email=data.email,
         username=data.username,
         password_hash=hash_password(data.password),
-        # do NOT pass is_admin here; some schemas don't have it
+        role=UserRole.admin if is_first_user else UserRole.user,
     )
     db.add(user)
     await db.commit()
     await db.refresh(user)
-
-    # Make first user admin only if model supports it
-    if hasattr(user, "is_admin") and await _first_user_is_admin(db):
-        setattr(user, "is_admin", True)
-        db.add(user)
-        await db.commit()
-        await db.refresh(user)
 
     access = create_token({"sub": user.id, "typ": "access"}, expires_in=ACCESS_TOKEN_EXPIRE_SECONDS)
 

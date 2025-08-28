@@ -8,10 +8,14 @@
 
         <div class="section">Server</div>
         <a href="/settings/libraries" class="{{ 'active' if panel=='libraries' else '' }}">Libraries</a>
-        <a href="/settings/remote" class="{{ 'active' if panel=='remote' else '' }}">Remote Access</a>
+        {% if user and user.is_admin %}
         <a href="/settings/transcoder" class="{{ 'active' if panel=='transcoder' else '' }}">Transcoder</a>
+        {% endif %}
 
         <div class="section">Admin</div>
+        {% if user and user.is_admin %}
+        <a href="/settings/remote" class="{{ 'active' if panel=='remote' else '' }}">Remote Access</a>
+        {% endif %}
         <a href="/settings/users" class="{{ 'active' if panel=='users' else '' }}">Users</a>
         <a href="/settings/tasks" class="{{ 'active' if panel=='tasks' else '' }}">Scheduled Tasks</a>
     </aside>
@@ -34,4 +38,5 @@
 </div>
 <script src="/static/js/settings.js"></script>
 <script src="/static/js/settings_libraries.js"></script>
+<script src="{{ url_for('static', path='js/settings_cert_picker.js') }}"></script>
 {% endblock %}

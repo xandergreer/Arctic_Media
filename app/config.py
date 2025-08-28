@@ -34,6 +34,12 @@ class Settings(BaseSettings):
     # Server configuration
     HOST: str = Field(default="0.0.0.0", description="Server host binding")
     PORT: int = Field(default=8000, description="Server port")
+    
+    # SSL Configuration
+    SSL_ENABLED: bool = Field(default=False, description="Enable SSL/HTTPS")
+    SSL_CERT_FILE: str = Field(default="", description="Path to SSL certificate file")
+    SSL_KEY_FILE: str = Field(default="", description="Path to SSL private key file")
+    SSL_CERT_PASSWORD: str = Field(default="", description="SSL certificate password (if needed)")
 
     # media toolchain
     FFMPEG_PATH: str = "ffmpeg"
