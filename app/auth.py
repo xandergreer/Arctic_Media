@@ -90,7 +90,7 @@ async def register(request: Request, db: AsyncSession = Depends(get_db)):
         return resp
     return JSONResponse({"ok": True, "user_id": user.id, "access": access})
 
-@router.post("/auth/login")
+@router.post("/login")
 async def login(request: Request, db: AsyncSession = Depends(get_db)):
     # Accept either JSON or form, and either "identifier" (username/email) or "username"
     ctype = (request.headers.get("content-type") or "").lower()
@@ -119,14 +119,12 @@ async def login(request: Request, db: AsyncSession = Depends(get_db)):
     if not user or not verify_password(password, user.password_hash):
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
-    # Issue cookies / tokens (adjust names to your constants if needed)
-    access = create_token({"sub": str(user.id), "scope": "access"}, expires_in=settings.ACCESS_EXPIRES)
-    refresh = create_token({"sub": str(user.id), "scope": "refresh"}, expires_in=settings.REFRESH_EXPIRES)
+    # Issue cookies / tokens
+    access = create_token({"sub": str(user.id), "typ": "access"}, expires_in=ACCESS_TOKEN_EXPIRE_SECONDS)
     csrf = new_csrf()
 
     resp = RedirectResponse(url="/home", status_code=303)
-    resp.set_cookie("am_access", access, httponly=True, samesite="lax", secure=bool(getattr(settings, "COOKIE_SECURE", False)), path="/")
-    resp.set_cookie("am_refresh", refresh, httponly=True, samesite="lax", secure=bool(getattr(settings, "COOKIE_SECURE", False)), path="/")
+    resp.set_cookie(ACCESS_COOKIE, access, httponly=True, samesite="lax", secure=bool(getattr(settings, "COOKIE_SECURE", False)), path="/")
     resp.set_cookie("am_csrf", csrf, httponly=False, samesite="lax", secure=bool(getattr(settings, "COOKIE_SECURE", False)), path="/")
     return resp
 
