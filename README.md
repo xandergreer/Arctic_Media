@@ -32,21 +32,11 @@ A modern, self-hosted media server for your personal movie and TV show collectio
 - **TV Shows:** Any video format
 - **Subtitles:** SRT, VTT, ASS
 
-### Folder Structure
-```
-Movies/
-├── Movie Name (2023).mp4
-├── Another Movie (2022).mkv
-└── ...
-
-TV Shows/
-├── Show Name/
-│   ├── Season 1/
-│   │   ├── S01E01.mp4
-│   │   └── S01E02.mp4
-│   └── Season 2/
-└── ...
-```
+### How It Works
+- **Smart Scanning** - Arctic Media automatically detects and organizes your media
+- **Metadata Matching** - Uses TMDB to get movie/show information, posters, and descriptions
+- **Flexible Structure** - Works with any folder organization you prefer
+- **Episode Detection** - Automatically identifies TV show episodes and seasons
 
 ## 🌐 Remote Access
 
