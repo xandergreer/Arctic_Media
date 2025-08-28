@@ -31,9 +31,9 @@ class Settings(BaseSettings):
         description="e.g. postgresql+asyncpg://user:pass@host:5432/dbname"
     )
 
-    # networking
-    HOST: str = "0.0.0.0"
-    PORT: int = 8000
+    # Server configuration
+    HOST: str = Field(default="0.0.0.0", description="Server host binding")
+    PORT: int = Field(default=8000, description="Server port")
 
     # media toolchain
     FFMPEG_PATH: str = "ffmpeg"

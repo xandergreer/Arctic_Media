@@ -1,15 +1,35 @@
 <h1>Remote Access</h1>
 <form id="form-remote" class="form-grid">
+    <h2>Server Configuration</h2>
+
     <label class="check">
-        <input type="checkbox" name="enable_remote_access"> Enable remote access
+        <input type="checkbox" name="external_access"> Enable external access (bind to 0.0.0.0)
     </label>
 
-    <label>Public base URL
+    <label>Server Host
+        <input class="input" type="text" name="server_host" placeholder="0.0.0.0"
+            title="Leave as 0.0.0.0 to allow external connections">
+    </label>
+
+    <label>Server Port
+        <input class="input" type="number" name="server_port" min="1024" max="65535" placeholder="8000">
+        <small class="muted">Port must be between 1024-65535</small>
+    </label>
+
+    <h2>Remote Access Settings</h2>
+
+    <label class="check">
+        <input type="checkbox" name="enable_remote_access"> Enable remote access features
+    </label>
+
+    <label>Public Base URL
         <input class="input" type="text" name="public_base_url" placeholder="https://your-server.example.com">
+        <small class="muted">Your custom domain or public IP (optional)</small>
     </label>
 
-    <label>Port
-        <input class="input" type="number" name="port" min="1" max="65535">
+    <label>Remote Port
+        <input class="input" type="number" name="port" min="1" max="65535" placeholder="32400">
+        <small class="muted">Port for remote access features (different from server port)</small>
     </label>
 
     <label class="check">
@@ -26,6 +46,7 @@
 
     <div class="row-actions">
         <button type="submit" class="btn btn-primary" id="save-remote">Save Changes</button>
+        <button type="button" class="btn btn-secondary" id="restart-server">Restart Server</button>
     </div>
 </form>
 <div id="msg-remote" class="muted"></div>

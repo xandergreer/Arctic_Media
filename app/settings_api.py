@@ -36,6 +36,11 @@ DEFAULTS = {
         "max_transcodes": 2,
         "prefer_remux": True,
     },
+    "server": {
+        "server_host": getattr(cfg, "HOST", "0.0.0.0"),
+        "server_port": getattr(cfg, "PORT", 8000),
+        "external_access": getattr(cfg, "HOST", "0.0.0.0") == "0.0.0.0",
+    },
 }
 
 def _merge(db_rows: Dict[str, Any]) -> Dict[str, Any]:
@@ -80,10 +85,16 @@ class TranscoderSettings(BaseModel):
     max_transcodes: int = 2
     prefer_remux: bool = True
 
+class ServerSettings(BaseModel):
+    server_host: str = Field(default="0.0.0.0", description="Server host binding")
+    server_port: int = Field(default=8000, ge=1024, le=65535, description="Server port")
+    external_access: bool = Field(default=True, description="Enable external access")
+
 class SettingsPatch(BaseModel):
     general: Optional[GeneralSettings] = None
     remote: Optional[RemoteSettings] = None
     transcoder: Optional[TranscoderSettings] = None
+    server: Optional[ServerSettings] = None
 
 # ---- Routes ----
 @router.get("")
@@ -103,6 +114,10 @@ async def get_remote(_: str = Depends(require_admin), db: AsyncSession = Depends
 async def get_transcoder(_: str = Depends(require_admin), db: AsyncSession = Depends(get_db)):
     return TranscoderSettings(**_merge(await _load_all(db))["transcoder"])
 
+@router.get("/server", response_model=ServerSettings)
+async def get_server(_: str = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+    return ServerSettings(**_merge(await _load_all(db))["server"])
+
 @router.patch("")
 async def patch_settings(body: SettingsPatch, _: str = Depends(require_admin), db: AsyncSession = Depends(get_db)):
     if body.general is not None:
@@ -111,4 +126,6 @@ async def patch_settings(body: SettingsPatch, _: str = Depends(require_admin), d
         await _upsert(db, "remote", body.remote.model_dump())
     if body.transcoder is not None:
         await _upsert(db, "transcoder", body.transcoder.model_dump())
+    if body.server is not None:
+        await _upsert(db, "server", body.server.model_dump())
     return {"ok": True}
