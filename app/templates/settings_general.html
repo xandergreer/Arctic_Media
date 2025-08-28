@@ -37,3 +37,25 @@
     </div>
 </form>
 <div id="msg-general" class="muted"></div>
+
+<h2 style="margin-top: 40px;">Server Configuration</h2>
+<form id="form-server" class="form-grid">
+    <label>Server Host
+        <input type="text" name="server_host" class="input" placeholder="0.0.0.0"
+            title="0.0.0.0 = Allow external connections, 127.0.0.1 = Local only">
+    </label>
+
+    <label>Server Port
+        <input type="number" name="server_port" class="input" placeholder="8000" min="1024" max="65535">
+    </label>
+
+    <label class="check">
+        <input type="checkbox" name="external_access"> Enable external access (0.0.0.0)
+    </label>
+
+    <div class="row-actions">
+        <button type="submit" class="btn btn-primary" id="save-server">Save Server Settings</button>
+        <button type="button" class="btn btn-secondary" id="restart-server">Restart Server</button>
+    </div>
+</form>
+<div id="msg-server" class="muted"></div>

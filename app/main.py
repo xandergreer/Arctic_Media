@@ -37,7 +37,7 @@ from sqlalchemy import select, func
 # ── Project imports ───────────────────────────────────────────────────────────
 from .config import settings
 from .database import init_db, get_db
-from .auth import router as auth_router, get_current_user, ACCESS_COOKIE
+from .auth import router as auth_router, get_current_user, ACCESS_COOKIE, require_admin
 from .utils import decode_token
 from .libraries import router as libraries_router
 # from .browse import router as browse_router  # (left disabled to avoid path clashes)
@@ -177,6 +177,18 @@ async def home(request: Request, db: AsyncSession = Depends(get_db), user = Depe
 async def health_check():
     """Health check endpoint"""
     return {"status": "healthy", "service": "arctic-media"}
+
+@app.post("/admin/server/restart")
+async def restart_server(user = Depends(require_admin)):
+    """Restart the server (admin only)"""
+    import os
+    import signal
+    import sys
+    
+    # Send restart signal to current process
+    os.kill(os.getpid(), signal.SIGTERM)
+    
+    return {"status": "restarting"}
 
 @app.get("/settings")
 async def settings_page(request: Request, user = Depends(get_current_user)):
