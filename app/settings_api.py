@@ -40,6 +40,9 @@ DEFAULTS = {
         "server_host": getattr(cfg, "HOST", "0.0.0.0"),
         "server_port": getattr(cfg, "PORT", 8000),
         "external_access": getattr(cfg, "HOST", "0.0.0.0") == "0.0.0.0",
+        "ssl_enabled": False,
+        "ssl_cert_file": "",
+        "ssl_key_file": "",
     },
 }
 
@@ -87,8 +90,12 @@ class TranscoderSettings(BaseModel):
 
 class ServerSettings(BaseModel):
     server_host: str = Field(default="0.0.0.0", description="Server host binding")
-    server_port: int = Field(default=8000, ge=1024, le=65535, description="Server port")
+    # Allow privileged ports like 443; responsibility to run with proper privileges
+    server_port: int = Field(default=8000, ge=1, le=65535, description="Server port")
     external_access: bool = Field(default=True, description="Enable external access")
+    ssl_enabled: bool = Field(default=False, description="Enable SSL/HTTPS")
+    ssl_cert_file: str = Field(default="", description="Path to SSL certificate file (.crt/.pem)")
+    ssl_key_file: str = Field(default="", description="Path to SSL private key file (.key)")
 
 class SettingsPatch(BaseModel):
     general: Optional[GeneralSettings] = None

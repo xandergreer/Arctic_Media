@@ -123,6 +123,26 @@ logging.getLogger("scanner").info("TMDB key present: %s", bool(settings.TMDB_API
 # ── Lifecycle ────────────────────────────────────────────────────────────────
 @app.on_event("startup")
 async def startup_event():
+    # Suppress benign Windows Proactor "connection reset by peer" spam
+    try:
+        import sys
+        if sys.platform.startswith("win"):
+            loop = asyncio.get_running_loop()
+            def _ignore_win_reset(loop, context):
+                exc = context.get("exception")
+                handle = context.get("handle")
+                msg = context.get("message", "") or ""
+                cb_qual = getattr(getattr(handle, "_callback", None), "__qualname__", "")
+                # Filter the noisy callback raised when clients close sockets early
+                if isinstance(exc, ConnectionResetError) and (
+                    "_ProactorBasePipeTransport._call_connection_lost" in cb_qual or
+                    "connection_lost" in msg.lower()
+                ):
+                    return  # swallow
+                loop.default_exception_handler(context)
+            loop.set_exception_handler(_ignore_win_reset)
+    except Exception:
+        pass
     await init_db()
     await start_hls_cleanup_task(app)
 
@@ -206,10 +226,23 @@ async def settings_panel(
     if panel not in valid_panels:
         raise HTTPException(404, "Settings panel not found")
     
+    # Admin-only panels
+    admin_panels = ["remote", "transcoder", "users", "tasks"]
+    if panel in admin_panels and not user.is_admin:
+        raise HTTPException(403, "Admin access required")
+    
     return request.app.state.templates.TemplateResponse(
         "settings_shell.html", 
-        {"request": request, "panel": panel}
+        {"request": request, "panel": panel, "user": user}
     )
+
+@app.get("/admin/settings", response_class=HTMLResponse)
+async def admin_settings_page(
+    request: Request, 
+    user = Depends(require_admin)
+):
+    """Admin settings page"""
+    return templates.TemplateResponse("admin_settings.html", {"request": request, "user": user})
 
 @app.get("/login", response_class=HTMLResponse)
 async def login_page(request: Request):

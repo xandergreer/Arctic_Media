@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <title>Admin Settings �?� Arctic</title>
+    <link rel="stylesheet" href="/static/css/base.css">
+    <link rel="stylesheet" href="/static/css/components.css">
+    <link rel="stylesheet" href="/static/css/pages.css">
+</head>
+
+<body>
+    <div class="container" style="max-width:900px">
+        <h1>Admin Settings</h1>
+        <p class="muted">Server configuration and advanced settings (Admin only)</p>
+
+        <!-- Server Configuration Section -->
+        <section style="margin-top:24px;">
+            <h2>Server Configuration</h2>
+            <form id="form-server" class="form-grid">
+                <label>Server Host
+                    <input type="text" name="server_host" class="input" placeholder="0.0.0.0"
+                        title="0.0.0.0 = Allow external connections, 127.0.0.1 = Local only">
+                </label>
+
+                <label>Server Port
+                    <input type="number" name="server_port" class="input" placeholder="8000" min="1024" max="65535">
+                </label>
+
+                <label class="check">
+                    <input type="checkbox" name="external_access"> Enable external access (0.0.0.0)
+                </label>
+
+                <h3 style="margin-top: 20px;">SSL/HTTPS Configuration</h3>
+                <label class="check">
+                    <input type="checkbox" name="ssl_enabled"> Enable SSL/HTTPS (Secure connections)
+                </label>
+
+                <label>SSL Certificate File
+                    <div style="display:flex; gap:8px; align-items:center;">
+                        <input id="ssl-cert-input" type="text" name="ssl_cert_file" class="input" placeholder="certificate.crt"
+                            title="Path to your SSL certificate file (.crt, .pem)" style="flex:1;">
+                        <button type="button" class="btn btn-secondary browse-file-btn" data-target="ssl-cert-input">Browse…</button>
+                    </div>
+                    <small class="muted">Full path to your SSL certificate file</small>
+                </label>
+
+                <label>SSL Private Key File
+                    <div style="display:flex; gap:8px; align-items:center;">
+                        <input id="ssl-key-input" type="text" name="ssl_key_file" class="input" placeholder="private.key"
+                            title="Path to your SSL private key file (.key)" style="flex:1;">
+                        <button type="button" class="btn btn-secondary browse-file-btn" data-target="ssl-key-input">Browse…</button>
+                    </div>
+                    <small class="muted">Full path to your SSL private key file</small>
+                </label>
+
+                <div class="row-actions">
+                    <button type="submit" class="btn btn-primary" id="save-server">Save Server Settings</button>
+                    <button type="button" class="btn btn-secondary" id="restart-server">Restart Server</button>
+                </div>
+            </form>
+            <div id="msg-server" class="muted"></div>
+        </section>
+
+        <!-- Remote Access Section -->
+        <section style="margin-top:32px;">
+            <h2>Remote Access</h2>
+            <form id="form-remote" class="form-grid">
+                <label class="check">
+                    <input type="checkbox" name="enable_remote_access"> Enable remote access features
+                </label>
+
+                <label>Public Base URL
+                    <input class="input" type="text" name="public_base_url"
+                        placeholder="https://your-server.example.com">
+                    <small class="muted">Your custom domain or public IP (optional)</small>
+                </label>
+
+                <label>Remote Port
+                    <input class="input" type="number" name="port" min="1" max="65535" placeholder="32400">
+                    <small class="muted">Port for remote access features (different from server port)</small>
+                </label>
+
+                <label class="check">
+                    <input type="checkbox" name="upnp"> Automatically configure port (UPnP)
+                </label>
+
+                <label>Allow fallback to insecure connections
+                    <select name="allow_insecure_fallback" class="input">
+                        <option value="never">Never</option>
+                        <option value="ask">Ask</option>
+                        <option value="always">Always</option>
+                    </select>
+                </label>
+
+                <div class="row-actions">
+                    <button type="submit" class="btn btn-primary" id="save-remote">Save Remote Settings</button>
+                </div>
+            </form>
+            <div id="msg-remote" class="muted"></div>
+        </section>
+
+        <!-- Transcoder Settings Section -->
+        <section style="margin-top:32px;">
+            <h2>Transcoder Settings</h2>
+            <form id="form-transcoder" class="form-grid">
+                <label>FFmpeg Path
+                    <input type="text" name="ffmpeg_path" class="input" placeholder="ffmpeg">
+                    <small class="muted">Path to ffmpeg executable</small>
+                </label>
+
+                <label>FFprobe Path
+                    <input type="text" name="ffprobe_path" class="input" placeholder="ffprobe">
+                    <small class="muted">Path to ffprobe executable</small>
+                </label>
+
+                <label>Hardware Acceleration
+                    <select name="hwaccel" class="input">
+                        <option value="auto">Auto</option>
+                        <option value="none">None</option>
+                        <option value="vaapi">VAAPI</option>
+                        <option value="qsv">QSV</option>
+                        <option value="nvenc">NVENC</option>
+                    </select>
+                </label>
+
+                <label>Max Transcodes
+                    <input type="number" name="max_transcodes" class="input" min="1" max="10" placeholder="2">
+                    <small class="muted">Maximum simultaneous transcoding sessions</small>
+                </label>
+
+                <label class="check">
+                    <input type="checkbox" name="prefer_remux"> Prefer remuxing over transcoding
+                </label>
+
+                <div class="row-actions">
+                    <button type="submit" class="btn btn-primary" id="save-transcoder">Save Transcoder Settings</button>
+                </div>
+            </form>
+            <div id="msg-transcoder" class="muted"></div>
+        </section>
+    </div>
+
+    <!-- FS Picker Modal -->
+    <div id="fs-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="fs-title">
+        <div class="modal-card" style="max-width:820px; width:100%;">
+            <header class="modal-header" style="display:flex;align-items:center;justify-content:space-between;gap:12px;">
+                <h3 id="fs-title" class="h3">Choose a file</h3>
+                <button id="fs-close" type="button" class="btn btn-ghost">Close</button>
+            </header>
+
+            <div class="modal-toolbar" style="display:flex;gap:8px;margin:8px 0;">
+                <select id="fs-roots" class="input" style="width:160px"></select>
+                <input id="fs-path" class="input" type="text" placeholder="C:/  or  F:/certs/cert.pem" style="flex:1;">
+                <button id="fs-go" type="button" class="btn btn-secondary">Go</button>
+            </div>
+
+            <nav id="fs-bc" class="fs-bc" style="margin:6px 0;display:flex;flex-wrap:wrap;gap:4px;"></nav>
+
+            <div id="fs-list" class="fs-list" style="margin-top:6px;max-height:50vh;overflow:auto;">
+                <div class="muted">Loading…</div>
+            </div>
+
+            <footer class="modal-footer" style="margin-top:12px;display:flex;justify-content:flex-end;gap:8px;">
+                <button id="fs-select" type="button" class="btn btn-primary">Select</button>
+            </footer>
+        </div>
+    </div>
+
+    <script src="/static/js/settings.js"></script>
+    <script src="{{ url_for('static', path='js/settings_cert_picker.js') }}" defer></script>
+</body>
+
+</html>
+

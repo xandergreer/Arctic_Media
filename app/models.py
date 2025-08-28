@@ -65,6 +65,10 @@ class User(Base):
 
     libraries: Mapped[List["Library"]] = relationship(back_populates="owner", cascade="all, delete-orphan")
 
+    @property
+    def is_admin(self) -> bool:
+        return self.role == UserRole.admin
+
 class DeviceSession(Base):
     __tablename__ = "device_sessions"
 

@@ -12,7 +12,51 @@
     <div class="container" style="max-width:900px">
         <h1>Settings</h1>
 
+        <!-- User Preferences Section -->
         <section style="margin-top:24px;">
+            <h2>User Preferences</h2>
+            <form id="form-general" class="form-grid">
+                <label>Language
+                    <select name="language" class="input">
+                        <option value="en">English</option>
+                    </select>
+                </label>
+
+                <label>Time format
+                    <select name="time_format" class="input">
+                        <option value="12h">12 Hour</option>
+                        <option value="24h">24 Hour</option>
+                    </select>
+                </label>
+
+                <label>Theme
+                    <select name="theme" class="input">
+                        <option value="dark">Dark</option>
+                        <option value="light">Light</option>
+                    </select>
+                </label>
+
+                <label class="check">
+                    <input type="checkbox" name="auto_sign_in"> Automatically sign in
+                </label>
+
+                <label class="check">
+                    <input type="checkbox" name="remember_tab"> Remember selected tab
+                </label>
+
+                <label class="check">
+                    <input type="checkbox" name="play_theme_music"> Play theme music
+                </label>
+
+                <div class="row-actions">
+                    <button type="submit" class="btn btn-primary" id="save-general">Save Preferences</button>
+                </div>
+            </form>
+            <div id="msg-general" class="muted"></div>
+        </section>
+
+        <!-- Library Management Section -->
+        <section style="margin-top:32px;">
             <h2>Add Library</h2>
             <form id="lib-form" style="display:grid;grid-template-columns:1fr 140px 1fr auto;gap:8px;align-items:end;">
                 <div>
@@ -42,6 +86,7 @@
         </section>
     </div>
 
+    <script src="/static/js/settings.js"></script>
     <script>
         async function loadLibs() {
             const res = await fetch('/api/libraries');

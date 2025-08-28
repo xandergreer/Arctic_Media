@@ -25,22 +25,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Load existing values
     try {
         if (general) setFormValues(general, await (await fetch('/admin/settings/general')).json());
-        if (remote) {
-            // Load both remote and server settings for the remote form
-            const [remoteSettings, serverSettings] = await Promise.all([
-                fetch('/admin/settings/remote').then(r => r.json()),
-                fetch('/admin/settings/server').then(r => r.json())
-            ]);
-
-            // Merge settings for the remote form
-            const combinedSettings = { ...remoteSettings, ...serverSettings };
-            setFormValues(remote, combinedSettings);
-        }
+        if (remote) setFormValues(remote, await (await fetch('/admin/settings/remote')).json());
         if (transcoder) setFormValues(transcoder, await (await fetch('/admin/settings/transcoder')).json());
-        if (server) {
-            const serverSettings = await (await fetch('/admin/settings/server')).json();
-            setFormValues(server, serverSettings);
-        }
+        if (server) setFormValues(server, await (await fetch('/admin/settings/server')).json());
     } catch (error) {
         console.error('Error loading settings:', error);
     }
@@ -52,7 +39,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         btn.classList.add('is-loading'); btn.disabled = true;
         const body = { general: getFormValues(general) };
         const r = await fetch('/admin/settings', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-        document.getElementById('msg-general').textContent = r.ok ? 'Saved.' : 'Save failed';
+        document.getElementById('msg-general').textContent = r.ok ? 'Preferences saved.' : 'Save failed';
         btn.classList.remove('is-loading'); btn.disabled = false;
     });
 
@@ -62,26 +49,8 @@ document.addEventListener('DOMContentLoaded', async () => {
         btn.classList.add('is-loading'); btn.disabled = true;
 
         try {
-            // Split form data into remote and server settings
             const formData = getFormValues(remote);
-            const remoteSettings = {
-                enable_remote_access: formData.enable_remote_access,
-                public_base_url: formData.public_base_url,
-                port: formData.port,
-                upnp: formData.upnp,
-                allow_insecure_fallback: formData.allow_insecure_fallback
-            };
-
-            const serverSettings = {
-                server_host: formData.server_host,
-                server_port: formData.server_port,
-                external_access: formData.external_access
-            };
-
-            const body = {
-                remote: remoteSettings,
-                server: serverSettings
-            };
+            const body = { remote: formData };
 
             const r = await fetch('/admin/settings', {
                 method: 'PATCH',
@@ -92,9 +61,9 @@ document.addEventListener('DOMContentLoaded', async () => {
             btn.classList.remove('is-loading'); btn.disabled = false;
 
             if (r.ok) {
-                document.getElementById('msg-remote').textContent = 'Settings saved successfully! Server restart may be required for port changes.';
+                document.getElementById('msg-remote').textContent = 'Remote settings saved successfully!';
             } else {
-                document.getElementById('msg-remote').textContent = 'Failed to save settings';
+                document.getElementById('msg-remote').textContent = 'Failed to save remote settings';
             }
         } catch (error) {
             btn.classList.remove('is-loading'); btn.disabled = false;
@@ -108,7 +77,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         btn.classList.add('is-loading'); btn.disabled = true;
         const body = { transcoder: getFormValues(transcoder) };
         const r = await fetch('/admin/settings', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-        document.getElementById('msg-transcoder').textContent = r.ok ? 'Saved.' : 'Save failed';
+        document.getElementById('msg-transcoder').textContent = r.ok ? 'Transcoder settings saved.' : 'Save failed';
         btn.classList.remove('is-loading'); btn.disabled = false;
     });
 
@@ -123,6 +92,12 @@ document.addEventListener('DOMContentLoaded', async () => {
         // Handle external access checkbox
         if (formData.external_access) {
             formData.server_host = '0.0.0.0';
+        }
+
+        // Handle SSL settings
+        if (!formData.ssl_enabled) {
+            formData.ssl_cert_file = '';
+            formData.ssl_key_file = '';
         }
 
         const body = { server: formData };
