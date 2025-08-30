@@ -24,12 +24,13 @@ if sys.platform.startswith("win"):
         pass
 
 # ── Stdlib / FastAPI / SQLA ───────────────────────────────────────────────────
-import os, time, secrets, re
+import os, time, secrets, re, ipaddress
 from fastapi import FastAPI, Request, Depends, HTTPException
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
+from starlette.middleware.gzip import GZipMiddleware
 from starlette.middleware.cors import CORSMiddleware
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
@@ -44,6 +45,7 @@ from .libraries import router as libraries_router
 from .fsbrowse import router as fs_router
 from .admin_users import router as admin_users_router
 from .tasks_api import router as tasks_api_router
+from .jobs_api import router as jobs_router
 from .settings_api import router as settings_api_router
 from .nav_api import router as nav_router
 from .ui_nav import router as ui_nav_router
@@ -56,18 +58,25 @@ from .streaming_hls import (
     stop_hls_cleanup_task,
 )
 from .models import Library, MediaItem, MediaKind, User, MediaFile
+from .scheduler import start_scheduler
 
 # ── App setup ─────────────────────────────────────────────────────────────────
 app = FastAPI(title="Arctic Media", version="2.0.0")
 
 # ── Static & templates ────────────────────────────────────────────────────────
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-STATIC_DIR = os.path.join(BASE_DIR, "static")
-TPL_DIR = os.path.join(BASE_DIR, "templates")
-os.makedirs(STATIC_DIR, exist_ok=True)
-app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+def _resolve_resource_dirs():
+    import sys
+    from pathlib import Path
+    if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+        base = Path(sys._MEIPASS) / "app"
+    else:
+        base = Path(__file__).parent
+    return base / "static", base / "templates"
+STATIC_DIR, TPL_DIR = _resolve_resource_dirs()
+STATIC_DIR.mkdir(parents=True, exist_ok=True)
+app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
-templates = Jinja2Templates(directory=TPL_DIR)
+templates = Jinja2Templates(directory=str(TPL_DIR))
 BUILD_ID = os.environ.get("ASSET_V") or str(int(time.time()))
 
 def tmdb_url(path: str | None, size: str = "w342") -> str | None:
@@ -92,6 +101,8 @@ app.state.templates = templates
 
 # ── Middleware ────────────────────────────────────────────────────────────────
 app.add_middleware(SessionMiddleware, secret_key=settings.SECRET_KEY)
+# Compress responses > ~1KB (helps over WAN/SSL)
+app.add_middleware(GZipMiddleware, minimum_size=1024)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[],                # keep same-origin; set if you need remote UI
@@ -99,6 +110,36 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Smart LAN redirect: if client IP is private and LOCAL_BASE_URL is configured, redirect HTML pages
+@app.middleware("http")
+async def lan_redirect(request: Request, call_next):
+    try:
+        lbu = (getattr(settings, "LOCAL_BASE_URL", "") or "").strip().rstrip("/")
+        if lbu:
+            # only for HTML page navigations
+            accept = (request.headers.get("accept") or "").lower()
+            if request.method in {"GET", "HEAD"} and "text/html" in accept:
+                # detect private/loopback client
+                chost = (request.client.host if request.client else None) or ""
+                try:
+                    ip = ipaddress.ip_address(chost)
+                    is_lan = ip.is_private or ip.is_loopback or ip.is_link_local
+                except Exception:
+                    is_lan = False
+                if is_lan:
+                    cur_host = (request.headers.get("host") or "").strip()
+                    cur_origin = f"{request.url.scheme}://{cur_host}".rstrip("/")
+                    if cur_origin and cur_origin.lower() != lbu.lower():
+                        # preserve path/query
+                        target = f"{lbu}{request.url.path}"
+                        if request.url.query:
+                            target += f"?{request.url.query}"
+                        return RedirectResponse(url=target, status_code=307)
+    except Exception:
+        # best-effort; fall through on any error
+        pass
+    return await call_next(request)
 
 # Single security/CSP middleware (covers all pages)
 @app.middleware("http")
@@ -117,6 +158,43 @@ async def add_security_headers(request: Request, call_next):
     "worker-src 'self' blob:"
 )
     return resp
+
+# Cache static assets aggressively (URLs are versioned via ASSET_V)
+@app.middleware("http")
+async def static_cache_control(request: Request, call_next):
+    resp = await call_next(request)
+    if request.url.path.startswith("/static/"):
+        # Immutable static assets; allow long cache
+        resp.headers.setdefault("Cache-Control", "public, max-age=31536000, immutable")
+    return resp
+
+# Lightweight perf log for slow requests (ASGI-safe to avoid BaseHTTPMiddleware edge cases)
+class PerfLoggerMiddleware:
+    def __init__(self, app):
+        self.app = app
+        self.log = logging.getLogger("perf")
+
+    async def __call__(self, scope, receive, send):
+        if scope.get("type") != "http":
+            return await self.app(scope, receive, send)
+
+        t0 = time.perf_counter()
+        status_code = 0
+
+        async def send_wrapper(message):
+            nonlocal status_code
+            if message.get("type") == "http.response.start":
+                status_code = message.get("status", status_code)
+            return await send(message)
+
+        try:
+            await self.app(scope, receive, send_wrapper)
+        finally:
+            dt = (time.perf_counter() - t0) * 1000
+            if dt > 800:
+                self.log.warning("%s %s -> %d %0.0fms", scope.get("method", ""), scope.get("path", ""), status_code, dt)
+
+app.add_middleware(PerfLoggerMiddleware)
 
 logging.getLogger("scanner").info("TMDB key present: %s", bool(settings.TMDB_API_KEY))
 
@@ -144,7 +222,39 @@ async def startup_event():
     except Exception:
         pass
     await init_db()
+    # Load transcoder settings and set ffmpeg overrides in env
+    try:
+        from sqlalchemy import select as _sa_select
+        from .models import ServerSetting as _ServerSetting
+        from .database import get_sessionmaker as _get_sm
+        Session = _get_sm()
+        async with Session() as _db:
+            _row = (await _db.execute(_sa_select(_ServerSetting).where(_ServerSetting.key == "transcoder"))).scalars().first()
+            _cfg = (_row.value or {}) if _row else {}
+            _ff = (_cfg.get("ffmpeg_path") or "").strip() or None
+            _fp = (_cfg.get("ffprobe_path") or "").strip() or None
+            if _ff: os.environ.setdefault("FFMPEG_PATH", _ff)
+            if _fp: os.environ.setdefault("FFPROBE_PATH", _fp)
+            _hw = (_cfg.get("hwaccel") or "").lower()
+            if _hw == "none":
+                os.environ["FFMPEG_HW"] = "cpu"
+            elif _hw in {"nvenc", "qsv", "amf"}:
+                os.environ["FFMPEG_HW"] = _hw
+            # else auto: leave unset to allow auto-detect
+            _alang = (_cfg.get("preferred_audio_lang") or "").strip()
+            if _alang:
+                os.environ["ARCTIC_PREF_AUDIO_LANG"] = _alang
+            _hls_cont = (_cfg.get("hls_container") or "").lower().strip()
+            if _hls_cont in ("fmp4", "ts"):
+                os.environ["ARCTIC_HLS_CONTAINER"] = _hls_cont
+    except Exception:
+        pass
     await start_hls_cleanup_task(app)
+    # start background scheduler for admin tasks (scans, metadata refresh)
+    try:
+        start_scheduler(app)
+    except Exception:
+        pass
 
 @app.on_event("shutdown")
 async def shutdown_event():
@@ -263,11 +373,38 @@ async def auth_login_get_redirect():
 
 # ── Movies ────────────────────────────────────────────────────────────────────
 @app.get("/movies", response_class=HTMLResponse)
-async def movies_index(request: Request, db: AsyncSession = Depends(get_db), user = Depends(get_current_user)):
-    movies = (await db.execute(
-        select(MediaItem).where(MediaItem.kind == MediaKind.movie).order_by(MediaItem.created_at.desc())
+async def movies_index(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user = Depends(get_current_user),
+    page: int = 1,
+    page_size: int = 60,
+):
+    page = max(1, int(page or 1))
+    page_size = max(12, min(120, int(page_size or 60)))
+    total_count = (await db.execute(
+        select(func.count()).select_from(MediaItem).where(MediaItem.kind == MediaKind.movie)
+    )).scalar_one()
+    items = (await db.execute(
+        select(MediaItem)
+        .where(MediaItem.kind == MediaKind.movie)
+        .order_by(MediaItem.created_at.desc())
+        .limit(page_size)
+        .offset((page - 1) * page_size)
     )).scalars().all()
-    return templates.TemplateResponse("movies.html", {"request": request, "items": movies, "movies": movies, "count": len(movies)})
+    total_pages = max(1, (total_count + page_size - 1) // page_size)
+    return templates.TemplateResponse(
+        "movies.html",
+        {
+            "request": request,
+            "items": items,
+            "movies": items,
+            "count": total_count,
+            "page": page,
+            "total_pages": total_pages,
+            "page_size": page_size,
+        },
+    )
 
 @app.get("/movie/{item_id}", response_class=HTMLResponse)
 async def movie_detail(item_id: str, request: Request, db: AsyncSession = Depends(get_db), user = Depends(get_current_user)):
@@ -283,11 +420,37 @@ async def movie_detail(item_id: str, request: Request, db: AsyncSession = Depend
 
 # ── TV ────────────────────────────────────────────────────────────────────────
 @app.get("/tv", response_class=HTMLResponse)
-async def tv_grid(request: Request, db: AsyncSession = Depends(get_db), user = Depends(get_current_user)):
+async def tv_grid(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user = Depends(get_current_user),
+    page: int = 1,
+    page_size: int = 60,
+):
+    page = max(1, int(page or 1))
+    page_size = max(12, min(120, int(page_size or 60)))
+    total_count = (await db.execute(
+        select(func.count()).select_from(MediaItem).where(MediaItem.kind == MediaKind.show)
+    )).scalar_one()
     shows = (await db.execute(
-        select(MediaItem).where(MediaItem.kind == MediaKind.show).order_by(MediaItem.sort_title.asc()).limit(5000)
+        select(MediaItem)
+        .where(MediaItem.kind == MediaKind.show)
+        .order_by(MediaItem.sort_title.asc())
+        .limit(page_size)
+        .offset((page - 1) * page_size)
     )).scalars().all()
-    return templates.TemplateResponse("tv.html", {"request": request, "items": shows})
+    total_pages = max(1, (total_count + page_size - 1) // page_size)
+    return templates.TemplateResponse(
+        "tv.html",
+        {
+            "request": request,
+            "items": shows,
+            "count": total_count,
+            "page": page,
+            "total_pages": total_pages,
+            "page_size": page_size,
+        },
+    )
 
 @app.get("/show/{show_id}", response_class=HTMLResponse)
 async def show_detail_page(show_id: str, request: Request, db: AsyncSession = Depends(get_db), user = Depends(get_current_user)):
@@ -413,6 +576,7 @@ app.include_router(fs_router)
 app.include_router(settings_api_router)
 app.include_router(admin_users_router)
 app.include_router(tasks_api_router)
+app.include_router(jobs_router)
 app.include_router(nav_router)
 app.include_router(ui_nav_router)
 app.include_router(tv_api_router)
@@ -421,3 +585,80 @@ app.include_router(tv_api_router)
 app.include_router(streaming_router)   # /stream/{file_id}/file, /stream/{file_id}/auto, etc.
 app.include_router(hls_router)         # /stream/{item_id}/master.m3u8 and /stream/{item_id}/hls/*
 app.include_router(jf_stream_router)      # /Videos/{itemId}/master.m3u8 and /Videos/{itemId}/hls/*
+
+# Lightweight JSON feeds for infinite scroll
+@app.get("/api/movies")
+async def api_movies(
+    db: AsyncSession = Depends(get_db),
+    user = Depends(get_current_user),
+    page: int = 1,
+    page_size: int = 60,
+):
+    page = max(1, int(page or 1))
+    page_size = max(12, min(120, int(page_size or 60)))
+    total_count = (await db.execute(
+        select(func.count()).select_from(MediaItem).where(MediaItem.kind == MediaKind.movie)
+    )).scalar_one()
+    rows = (await db.execute(
+        select(MediaItem)
+        .where(MediaItem.kind == MediaKind.movie)
+        .order_by(MediaItem.created_at.desc())
+        .limit(page_size)
+        .offset((page - 1) * page_size)
+    )).scalars().all()
+    total_pages = max(1, (total_count + page_size - 1) // page_size)
+    items = [
+        {
+            "id": it.id,
+            "title": it.title,
+            "year": it.year,
+            "poster_url": getattr(it, "poster_url", None),
+            "extra_json": getattr(it, "extra_json", None) or {},
+        }
+        for it in rows
+    ]
+    return {
+        "page": page,
+        "page_size": page_size,
+        "total_pages": total_pages,
+        "count": total_count,
+        "items": items,
+    }
+
+@app.get("/api/tv")
+async def api_tv(
+    db: AsyncSession = Depends(get_db),
+    user = Depends(get_current_user),
+    page: int = 1,
+    page_size: int = 60,
+):
+    page = max(1, int(page or 1))
+    page_size = max(12, min(120, int(page_size or 60)))
+    total_count = (await db.execute(
+        select(func.count()).select_from(MediaItem).where(MediaItem.kind == MediaKind.show)
+    )).scalar_one()
+    rows = (await db.execute(
+        select(MediaItem)
+        .where(MediaItem.kind == MediaKind.show)
+        .order_by(MediaItem.sort_title.asc())
+        .limit(page_size)
+        .offset((page - 1) * page_size)
+    )).scalars().all()
+    total_pages = max(1, (total_count + page_size - 1) // page_size)
+    items = [
+        {
+            "id": it.id,
+            "title": it.title,
+            "year": it.year,
+            "poster_url": getattr(it, "poster_url", None),
+            "extra_json": getattr(it, "extra_json", None) or {},
+        }
+        for it in rows
+    ]
+    return {
+        "page": page,
+        "page_size": page_size,
+        "total_pages": total_pages,
+        "count": total_count,
+        "items": items,
+    }

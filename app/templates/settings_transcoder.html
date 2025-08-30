@@ -26,6 +26,19 @@
         <input type="checkbox" name="prefer_remux"> Prefer remux when possible
     </label>
 
+    <label>Preferred audio language
+        <input class="input" type="text" name="preferred_audio_lang" placeholder="eng">
+        <small class="muted">Use 3-letter (eng, spa, deu) or 2-letter (en, es, de) code</small>
+    </label>
+
+    <label>HLS container
+        <select name="hls_container" class="input">
+            <option value="auto">Auto</option>
+            <option value="fmp4">fMP4</option>
+            <option value="ts">MPEG-TS</option>
+        </select>
+    </label>
+
     <div class="row-actions">
         <button type="submit" class="btn btn-primary" id="save-transcoder">Save Changes</button>
     </div>

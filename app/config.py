@@ -41,6 +41,12 @@ class Settings(BaseSettings):
     SSL_KEY_FILE: str = Field(default="", description="Path to SSL private key file")
     SSL_CERT_PASSWORD: str = Field(default="", description="SSL certificate password (if needed)")
 
+    # networking / UX
+    LOCAL_BASE_URL: str = Field(
+        default="",
+        description="Optional LAN origin like https://192.168.1.10:443 for in-LAN redirects",
+    )
+
     # media toolchain
     FFMPEG_PATH: str = "ffmpeg"
     FFPROBE_PATH: str = "ffprobe"

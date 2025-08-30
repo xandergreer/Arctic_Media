@@ -7,6 +7,32 @@
     const $$ = (sel, ctx = document) => Array.from(ctx.querySelectorAll(sel));
     const log = (...a) => { try { console.log("[player]", ...a); } catch { } };
     const warn = (...a) => { try { console.warn("[player]", ...a); } catch { } };
+    const fmtTime = (secs) => {
+        secs = Math.max(0, Math.floor(Number(secs || 0)));
+        const h = Math.floor(secs / 3600);
+        const m = Math.floor((secs % 3600) / 60);
+        const s = secs % 60;
+        const pad = (n) => String(n).padStart(2, '0');
+        return h > 0 ? `${h}:${pad(m)}:${pad(s)}` : `${m}:${pad(s)}`;
+    };
+    const updateDurationLabel = (video, totalSecs) => {
+        try {
+            if (!totalSecs || !Number.isFinite(totalSecs)) return;
+            const plyrRoot = video.closest('.plyr') || document;
+            const label = plyrRoot.querySelector('.plyr__time--duration');
+            if (label) label.textContent = fmtTime(totalSecs);
+        } catch {}
+    };
+    async function fetchMetaDuration(fileId) {
+        try {
+            const r = await fetch(`/stream/${encodeURIComponent(fileId)}/meta`, { cache: 'no-store' });
+            if (!r.ok) return null;
+            const j = await r.json();
+            return (j && typeof j.duration === 'number') ? j.duration : null;
+        } catch {
+            return null;
+        }
+    }
 
     // load hls.js from your local copy
     function loadHls() {
@@ -51,6 +77,9 @@
 
     // Keep one Plyr instance
     let plyr = null;
+    let currentQuality = 0; // 0=Auto; else height like 1080,720
+    let currentFileId = null;
+    let currentItemId = null;
     function ensurePlyr(video) {
         if (window.Plyr && !plyr) {
             plyr = new Plyr(video, {
@@ -59,7 +88,24 @@
                     "mute", "volume", "captions", "settings", "pip", "airplay", "fullscreen"
                 ],
                 ratio: "16:9",
-                clickToPlay: true
+                clickToPlay: true,
+                settings: ["quality", "captions", "speed"],
+                quality: {
+                    default: 0,
+                    options: [0, 1080, 720, 480],
+                    forced: true,
+                    onChange: (q) => {
+                        try {
+                            currentQuality = Number(q) || 0;
+                            if (currentItemId) {
+                                const qq = currentQuality > 0 ? `&vcodec=h264&vh=${currentQuality}` : '';
+                                const m3u8 = `/stream/${encodeURIComponent(currentItemId)}/master.m3u8?container=fmp4${qq}`;
+                                const mp4 = currentFileId ? `/stream/${encodeURIComponent(currentFileId)}/auto` : '';
+                                attachAndPlay({ video, m3u8, mp4 });
+                            }
+                        } catch {}
+                    }
+                }
             });
         }
         return plyr;
@@ -88,6 +134,7 @@
                         fragLoadingMaxRetry: 2,
                         manifestLoadingMaxRetry: 2,
                         enableWorker: true,
+                        startPosition: -1,
                         // Better codec handling
                         forceKeyFrameOnDiscontinuity: true,
                         abrEwmaDefaultEstimate: 500000,
@@ -136,7 +183,7 @@
                     hls.loadSource(m3u8);
                     hls.attachMedia(video);
                     hls.on(Hls.Events.MANIFEST_PARSED, () => {
-                        try { hls.startLoad(0); } catch { }
+                        try { hls.startLoad(-1); } catch { }
                         video.play().catch(() => { });
                     });
 
@@ -172,27 +219,78 @@
 
         if (npTitle) npTitle.textContent = title || "";
 
-        const direct = `/stream/${encodeURIComponent(fileId)}/direct`;  // Fastest - direct file
-        const m3u8 = `/stream/${encodeURIComponent(fileId)}/master.m3u8?container=fmp4`;  // HLS
+        // Fetch known duration for better UI (does not affect actual seek constraints)
+        const metaDur = await fetchMetaDuration(fileId);
+        if (metaDur) {
+            video.dataset.totalDuration = String(Math.floor(metaDur));
+            updateDurationLabel(video, metaDur);
+        }
+
+        const direct = `/stream/${encodeURIComponent(fileId)}/file`;  // Fastest - direct file (Range)
+        // Use the itemId for HLS endpoints; this avoids mismatches with fileId-only routes
+        const itemId = (video.dataset && (video.dataset.itemId || video.getAttribute("data-item-id"))) || "";
+        currentFileId = fileId; currentItemId = itemId || null;
+        const qq = currentQuality > 0 ? `&vcodec=h264&vh=${currentQuality}` : '';
+        const m3u8 = itemId
+            ? `/stream/${encodeURIComponent(itemId)}/master.m3u8?container=fmp4${qq}`
+            : ``;  // if missing, we'll fall back to direct/mp4
         const mp4 = `/stream/${encodeURIComponent(fileId)}/auto`;  // Progressive fallback
 
         log("playItem", { fileId, direct, m3u8, mp4, title });
 
-        // Try direct file first (fastest)
+        // Try direct file first (fastest) with graceful fallback if decode stalls or fails
+        let triedDirect = false;
         try {
-            const response = await fetch(direct, { method: 'HEAD' });
+            // Prefer smarter HEAD that checks codecs when we have itemId
+            const headUrl = itemId ? `/stream/${encodeURIComponent(itemId)}/direct` : direct;
+            const response = await fetch(headUrl, { method: 'HEAD', cache: 'no-store' });
             if (response.ok) {
+                triedDirect = true;
+                let fellBack = false;
+                const cleanup = () => {
+                    try { video.removeEventListener('error', onError); } catch {}
+                    try { video.removeEventListener('playing', onPlaying); } catch {}
+                    try { video.removeEventListener('canplay', onPlaying); } catch {}
+                    if (fallbackTimer) clearTimeout(fallbackTimer);
+                };
+                const doFallback = () => {
+                    if (fellBack) return; fellBack = true; cleanup();
+                    attachAndPlay({ video, m3u8, mp4 }).then(() => openPlayerUI());
+                };
+                const onError = () => {
+                    // codec or playback failure — fall back to HLS/MP4
+                    doFallback();
+                };
+                const onPlaying = () => { cleanup(); };
+                video.addEventListener('error', onError, { once: true });
+                video.addEventListener('playing', onPlaying, { once: true });
+                video.addEventListener('canplay', onPlaying, { once: true });
+
                 video.src = direct;
                 video.load();
-                await video.play().catch(() => { });
-                openPlayerUI();
-                return;
+                try {
+                    await video.play();
+                    // If decode doesn’t start (no events) within a short window, fall back
+                    var fallbackTimer = setTimeout(() => {
+                        // Haven't started decoding? (readyState < HAVE_CURRENT_DATA or no progress)
+                        if (video.readyState < 2 || video.currentTime === 0) {
+                            doFallback();
+                        } else {
+                            cleanup();
+                        }
+                    }, 2500);
+                    openPlayerUI();
+                    return;
+                } catch (e) {
+                    // Autoplay/codec issue — fallback
+                    doFallback();
+                }
             }
         } catch (e) {
-            log("Direct file not available, trying HLS");
+            log("Direct HEAD failed, trying HLS");
         }
 
-        // Fall back to HLS
+        // Fall back to HLS (or progressive) if direct was not viable
         await attachAndPlay({ video, m3u8, mp4 });
         openPlayerUI();
     }

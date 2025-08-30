@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import contextlib
 import mimetypes
 import hashlib
 import json
@@ -13,9 +14,13 @@ import time
 from datetime import datetime
 from pathlib import Path
 from typing import Optional, Tuple
+import subprocess, json
+from collections import OrderedDict
 
 from anyio import to_thread
-from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response
+_WIN_BELOW_NORMAL = 0x00004000 if os.name == 'nt' else 0
+from .config import settings
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response, Query
 from fastapi.responses import (
     StreamingResponse,
     HTMLResponse,
@@ -28,6 +33,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from .auth import get_current_user
 from .database import get_db
 from .models import MediaFile, MediaItem
+from .utils import ffprobe_info
 
 router = APIRouter(prefix="/stream", tags=["stream"])
 
@@ -67,6 +73,47 @@ def _rewrite_master_uris(playlist_text: str, prefix: str) -> str:
         out.append(line)
     return "\n".join(out) + "\n"
 
+def _first_nonempty(*vals: Optional[str]) -> str:
+    for v in vals:
+        if v:
+            return v
+    return ""
+
+def _ff_bin_from_bundle(name: str) -> str:
+    import sys
+    try:
+        cand = []
+        names = [name + (".exe" if os.name == 'nt' else ""), name]
+        if getattr(sys, "frozen", False):
+            if getattr(sys, "_MEIPASS", None):
+                base = sys._MEIPASS  # type: ignore[attr-defined]
+                cand += [os.path.join(base, n) for n in names]
+            exe_dir = os.path.dirname(sys.executable)
+            cand += [os.path.join(exe_dir, n) for n in names]
+        cand += [os.path.abspath(n) for n in names]
+        for p in cand:
+            if p and os.path.exists(p):
+                return p
+    except Exception:
+        pass
+    return ""
+
+def ffmpeg_exe() -> str:
+    return _first_nonempty(
+        os.getenv("FFMPEG_BIN"),
+        os.getenv("FFMPEG_PATH"),
+        getattr(settings, "FFMPEG_PATH", None),
+        _ff_bin_from_bundle("ffmpeg"),
+    ) or "ffmpeg"
+
+def ffprobe_exe() -> str:
+    return _first_nonempty(
+        os.getenv("FFPROBE_BIN"),
+        os.getenv("FFPROBE_PATH"),
+        getattr(settings, "FFPROBE_PATH", None),
+        _ff_bin_from_bundle("ffprobe"),
+    ) or "ffprobe"
+
 def _spawn_hls_ffmpeg(
     src_path: str,
     out_dir: Path,
@@ -89,7 +136,7 @@ def _spawn_hls_ffmpeg(
     init_name = "init.mp4"
 
     args = [
-        "ffmpeg", "-nostdin", "-hide_banner", "-loglevel", "error",
+        ffmpeg_exe(), "-nostdin", "-hide_banner", "-loglevel", "error",
         "-fflags", "+genpts",
         "-avoid_negative_ts", "make_zero",
         "-i", src_path,
@@ -224,16 +271,93 @@ async def _get_file_and_item(db: AsyncSession, file_id: str) -> tuple[MediaFile,
     item = await db.get(MediaItem, mf.media_item_id) if mf.media_item_id else None
     return mf, item
 
+async def _maybe_persist_probe(db: AsyncSession, mf: MediaFile, path: str, info: dict) -> None:
+    """Persist probed codec/dimension info into MediaFile if missing or stale.
+
+    Avoids re-probing on subsequent plays (Jellyfin-style behavior).
+    """
+    try:
+        st = os.stat(path)
+    except Exception:
+        return
+
+    # Compute basic derived fields
+    ext = os.path.splitext(path)[1].lower().lstrip(".") or None
+    size_bytes = int(st.st_size) if hasattr(st, "st_size") else None
+
+    want = {
+        "container": ext,
+        "vcodec": info.get("vcodec") or None,
+        "acodec": info.get("acodec") or None,
+        "channels": info.get("channels") or None,
+        "width": info.get("width") or None,
+        "height": info.get("height") or None,
+        "bitrate": info.get("bitrate") or None,
+        "size_bytes": size_bytes,
+    }
+
+    changed = False
+    for k, v in want.items():
+        if getattr(mf, k, None) != v and v is not None:
+            setattr(mf, k, v)
+            changed = True
+
+    if changed:
+        try:
+            await db.flush()
+            await db.commit()
+        except Exception:
+            # Don't break playback on DB write failures
+            try:
+                await db.rollback()
+            except Exception:
+                pass
+
 # ──────────────────────────────────────────────────────────────────────────────
 # Codec & browser detection
 # ──────────────────────────────────────────────────────────────────────────────
 
-def ffprobe_streams(path: str) -> dict:
-    """Return first video/audio stream info: vcodec, acodec, v_profile, v_pix_fmt, width, height"""
-    info = {"vcodec": None, "acodec": None, "v_profile": None, "v_pix_fmt": None, "width": None, "height": None}
+_FFPROBE_CACHE: "OrderedDict[tuple[str, int], dict]" = OrderedDict()
+_FFPROBE_LOCK = asyncio.Lock()
+_FFPROBE_CACHE_MAX = int(os.getenv("FFPROBE_CACHE_MAX", "256"))
+
+async def ffprobe_streams(path: str) -> dict:
+    """Return first video/audio stream info (async, cached with mtime key, timeout-protected).
+
+    Keys: vcodec, acodec, v_profile, v_pix_fmt, width, height, channels, bitrate
+    """
+    # Default empty result
+    empty = {"vcodec": None, "acodec": None, "v_profile": None, "v_pix_fmt": None, "width": None, "height": None, "channels": None, "bitrate": None}
+
     try:
-        out = subprocess.check_output(["ffprobe", "-v", "error", "-show_streams", "-of", "json", path])
-        data = json.loads(out.decode("utf-8"))
+        st = os.stat(path)
+        key = (path, int(getattr(st, "st_mtime_ns", int(st.st_mtime * 1e9))))
+    except Exception:
+        return dict(empty)
+
+    # Cache lookup
+    async with _FFPROBE_LOCK:
+        if key in _FFPROBE_CACHE:
+            info = _FFPROBE_CACHE.pop(key)
+            _FFPROBE_CACHE[key] = info  # move to end (LRU)
+            return dict(info)
+
+    # Probe asynchronously with timeout
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            ffprobe_exe(), "-v", "error", "-show_streams", "-of", "json", path,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+        try:
+            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=float(os.getenv("FFPROBE_TIMEOUT", "3.0")))
+        except asyncio.TimeoutError:
+            with contextlib.suppress(Exception):
+                proc.kill()
+            return dict(empty)
+
+        data = json.loads((stdout or b"").decode("utf-8", errors="ignore"))
+        info = dict(empty)
         got_v = got_a = False
         for s in data.get("streams", []):
             ct = s.get("codec_type")
@@ -243,15 +367,35 @@ def ffprobe_streams(path: str) -> dict:
                 info["v_pix_fmt"] = s.get("pix_fmt")
                 info["width"] = s.get("width")
                 info["height"] = s.get("height")
+                # Some ffprobe builds expose bit_rate at the stream level
+                try:
+                    br = s.get("bit_rate")
+                    if br is not None:
+                        info["bitrate"] = int(br)
+                except Exception:
+                    pass
                 got_v = True
             elif ct == "audio" and not got_a:
                 info["acodec"] = s.get("codec_name")
+                try:
+                    ch = s.get("channels")
+                    if ch is not None:
+                        info["channels"] = int(ch)
+                except Exception:
+                    pass
                 got_a = True
             if got_v and got_a:
                 break
     except Exception:
-        pass
-    return info
+        return dict(empty)
+
+    # Insert into cache (LRU)
+    async with _FFPROBE_LOCK:
+        _FFPROBE_CACHE[key] = info
+        while len(_FFPROBE_CACHE) > _FFPROBE_CACHE_MAX:
+            _FFPROBE_CACHE.popitem(last=False)
+
+    return dict(info)
 
 def browser_caps(user_agent: str) -> dict:
     ua = (user_agent or "").lower()
@@ -290,37 +434,137 @@ def _is_direct_play_ok(path: str, info: dict, caps: dict) -> bool:
 # Remux builder
 # ──────────────────────────────────────────────────────────────────────────────
 
+def _pick_audio_map_for_path(path: str, forced_idx: Optional[int] = None, preferred_lang: Optional[str] = None) -> str:
+    """Return ffmpeg -map selector for best audio stream.
+
+    Order: forced_idx -> default+lang -> any lang (skip commentary) -> default -> stereo -> first
+    """
+    try:
+        proc = subprocess.run(
+            [ffprobe_exe(), "-v", "quiet", "-select_streams", "a", "-show_entries",
+             "stream=index,channels:stream_tags=language,title:disposition=default", "-of", "json", path],
+            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=5)
+        data = json.loads((proc.stdout or b"").decode() or "{}")
+        streams = data.get("streams", [])
+        # forced index wins
+        if forced_idx is not None and streams:
+            try:
+                pos = max(0, min(int(forced_idx), len(streams)-1))
+                return f"0:a:{pos}?"
+            except Exception:
+                pass
+        pref = (preferred_lang or os.getenv("ARCTIC_PREF_AUDIO_LANG", "eng") or "eng").lower().strip()
+        _map = {
+            "en": "eng", "eng": "en",
+            "es": "spa", "spa": "es",
+            "de": "deu", "deu": "de",
+            "fr": "fra", "fra": "fr",
+            "it": "ita", "ita": "it",
+            "pt": "por", "por": "pt",
+            "ru": "rus", "rus": "ru",
+            "ja": "jpn", "jpn": "ja",
+            "ko": "kor", "kor": "ko",
+            "zh": "zho", "zho": "zh",
+        }
+        prefer = {pref}
+        if pref in _map:
+            prefer.add(_map[pref])
+        best_pos = None
+        # 1) prefer default disposition with preferred language
+        for pos, s in enumerate(streams):
+            disp = (s.get("disposition") or {}).get("default")
+            lang = (s.get("tags", {}) or {}).get("language")
+            try:
+                if int(disp or 0) == 1 and lang and str(lang).lower() in prefer:
+                    best_pos = pos; break
+            except Exception:
+                pass
+        # 2) prefer any with preferred language (skip commentary)
+        if best_pos is None:
+            for pos, s in enumerate(streams):
+                lang = (s.get("tags", {}) or {}).get("language")
+                title = (s.get("tags", {}) or {}).get("title", "")
+                t = str(title or "").lower()
+                if ("commentary" in t) or ("descriptive" in t) or ("narration" in t):
+                    continue
+                if lang and str(lang).lower() in prefer:
+                    best_pos = pos; break
+        # 3) prefer default disposition
+        for pos, s in enumerate(streams):
+            disp = (s.get("disposition") or {}).get("default")
+            try:
+                if int(disp or 0) == 1:
+                    best_pos = pos; break
+            except Exception:
+                pass
+        if best_pos is None:
+            for pos, s in enumerate(streams):
+                lang = (s.get("tags", {}) or {}).get("language")
+                title = (s.get("tags", {}) or {}).get("title", "")
+                t = str(title or "").lower()
+                if ("commentary" in t) or ("descriptive" in t) or ("narration" in t):
+                    continue
+                if lang and str(lang).lower() in prefer:
+                    best_pos = pos; break
+        if best_pos is None:
+            for pos, s in enumerate(streams):
+                try:
+                    if int(s.get("channels") or 0) >= 2:
+                        best_pos = pos; break
+                except Exception:
+                    pass
+        if best_pos is None and streams:
+            best_pos = 0
+        return f"0:a:{best_pos}?" if best_pos is not None else "0:a:0?"
+    except Exception:
+        return "0:a:0?"
+
 def _remux_cmd(path: str, copy_video: bool, transcode_audio_to_aac: bool):
+    threads = os.getenv("FFMPEG_THREADS", "2")
+    a_map = _pick_audio_map_for_path(path)
     args = [
-        "ffmpeg", "-nostdin", "-hide_banner", "-loglevel", "error",
+        ffmpeg_exe(), "-nostdin", "-hide_banner", "-loglevel", "error",
         "-fflags", "+genpts", "-avoid_negative_ts", "make_zero",
-        "-i", path, "-map", "0:v:0", "-map", "0:a:0?",
+        "-i", path, "-map", "0:v:0", "-map", a_map,
         "-c:v", "copy" if copy_video else "libx264",
-        *(["-pix_fmt", "yuv420p", "-preset", "veryfast", "-crf", "21"] if not copy_video else []),
+        *(["-pix_fmt", "yuv420p", "-preset", os.getenv("FFMPEG_PRESET","veryfast"), "-crf", os.getenv("FFMPEG_CRF","23"), "-threads", threads] if not copy_video else []),
         "-c:a", "copy" if not transcode_audio_to_aac else "aac",
-        *(["-b:a", "160k"] if transcode_audio_to_aac else []),
+        *(["-b:a", "160k", "-af", "aresample=async=1:first_pts=0:min_hard_comp=0.100"] if transcode_audio_to_aac else []),
         "-movflags", "frag_keyframe+empty_moov+faststart",
         "-f", "mp4", "pipe:1",
         "-max_muxing_queue_size", "1024",
     ]
     return args
 
-def _pipe(cmd):
+async def _pipe_async(cmd):
+    """Non-blocking ffmpeg pipe using asyncio subprocess.
+
+    Avoids blocking the event loop so multiple streams can run concurrently.
+    """
     try:
-        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE)
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL,
+            creationflags=_WIN_BELOW_NORMAL,
+        )
     except FileNotFoundError:
         raise HTTPException(status_code=500, detail="FFmpeg not found")
+
     try:
+        assert proc.stdout is not None
+        pipe_chunk = int(os.getenv("STREAM_PIPE_CHUNK", str(256 * 1024)))
         while True:
-            chunk = proc.stdout.read(64 * 1024)
+            chunk = await proc.stdout.read(pipe_chunk)
             if not chunk:
                 break
             yield chunk
+    except asyncio.CancelledError:
+        # Client disconnected; stop quietly
+        pass
     finally:
-        try:
+        with contextlib.suppress(Exception):
             proc.kill()
-        except Exception:
-            pass
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Pages
@@ -411,7 +655,11 @@ async def stream_file(
             )
         raise
 
-    chunk_size = 1024 * 1024  # 1 MiB
+    # Range streaming chunk size (tunable via env; default 2 MiB)
+    try:
+        chunk_size = int(os.getenv("STREAM_RANGE_CHUNK", str(2 * 1024 * 1024)))
+    except Exception:
+        chunk_size = 2 * 1024 * 1024
     length = end - start + 1
 
     async def _iter_file_async(path: str, start: int, length: int, chunk_size: int, request: Request):
@@ -440,6 +688,66 @@ async def stream_file(
     }
     return StreamingResponse(_iter_file_async(path, start, length, chunk_size, request), status_code=206, headers=headers)
 
+
+# Explicit HEAD handler to ensure compatibility with proxies/clients
+@router.head("/{file_id}/file")
+async def head_stream_file(
+    file_id: str,
+    db: AsyncSession = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    mf, _ = await _get_file_and_item(db, file_id)
+    path = mf.path
+    if not os.path.isfile(path):
+        raise HTTPException(status_code=404, detail="Missing media file on disk")
+
+    file_stat = os.stat(path)
+    file_size = file_stat.st_size
+    content_type, _ = mimetypes.guess_type(path)
+    content_type = content_type or "application/octet-stream"
+    last_mod = datetime.utcfromtimestamp(int(file_stat.st_mtime)).strftime("%a, %d %b %Y %H:%M:%S GMT")
+    etag = f'W/"{hashlib.md5(str(file_stat.st_mtime_ns).encode()).hexdigest()}"'
+
+    return Response(
+        status_code=200,
+        headers={
+            "Content-Type": content_type,
+            "Content-Length": str(file_size),
+            "Accept-Ranges": "bytes",
+            "ETag": etag,
+            "Last-Modified": last_mod,
+            "Cache-Control": "private, max-age=0, must-revalidate",
+        },
+    )
+
+# Lightweight metadata for player UI (duration etc.)
+@router.get("/{file_id}/meta")
+async def stream_meta(
+    file_id: str,
+    db: AsyncSession = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    mf, item = await _get_file_and_item(db, file_id)
+    duration_s: Optional[float] = None
+    # Prefer DB item runtime if available
+    try:
+        if item and getattr(item, "runtime_ms", None):
+            duration_s = float(item.runtime_ms) / 1000.0  # type: ignore[arg-type]
+    except Exception:
+        pass
+    # Probe as needed
+    try:
+        info = ffprobe_info(mf.path)
+        if info.get("duration"):
+            duration_s = float(info["duration"])  # type: ignore[assignment]
+    except Exception:
+        pass
+    return {
+        "file_id": mf.id,
+        "item_id": item.id if item else None,
+        "duration": duration_s,
+    }
+
 # ──────────────────────────────────────────────────────────────────────────────
 # Remux / Auto
 # ──────────────────────────────────────────────────────────────────────────────
@@ -448,6 +756,8 @@ async def stream_file(
 async def stream_remux(
     file_id: str,
     request: Request,
+    aidx: Optional[int] = Query(None),
+    alang: Optional[str] = Query(None),
     db: AsyncSession = Depends(get_db),
     user=Depends(get_current_user),
 ):
@@ -456,19 +766,44 @@ async def stream_remux(
     if not os.path.isfile(path):
         raise HTTPException(status_code=404, detail="Missing media file on disk")
 
-    info = ffprobe_streams(path)
+    info = await ffprobe_streams(path)
+    # Persist to DB for future fast decisions
+    try:
+        await _maybe_persist_probe(db, mf, path, info)
+    except Exception:
+        pass
     caps = browser_caps(request.headers.get("user-agent", ""))
 
     copy_video = _can_copy_video(info, caps)
     transcode_audio = (info.get("acodec") or "").lower() not in {"aac", "mp3"}
 
-    cmd = _remux_cmd(path, copy_video=copy_video, transcode_audio_to_aac=transcode_audio)
-    return StreamingResponse(_pipe(cmd), media_type="video/mp4", headers={"Cache-Control": "no-store"})
+    # Inform audio selector via env per-process would be heavy; instead, override mapping inline
+    a_map = _pick_audio_map_for_path(path, forced_idx=aidx, preferred_lang=alang)
+    # Temporarily wrap remux cmd to inject custom map
+    def _remux_cmd_override():
+        threads = os.getenv("FFMPEG_THREADS", "2")
+        args = [
+            ffmpeg_exe(), "-nostdin", "-hide_banner", "-loglevel", "error",
+            "-fflags", "+genpts", "-avoid_negative_ts", "make_zero",
+            "-i", path, "-map", "0:v:0", "-map", a_map,
+            "-c:v", "copy" if copy_video else "libx264",
+            *(["-pix_fmt", "yuv420p", "-preset", os.getenv("FFMPEG_PRESET","veryfast"), "-crf", os.getenv("FFMPEG_CRF","23"), "-threads", threads] if not copy_video else []),
+            "-c:a", "copy" if not transcode_audio else "aac",
+            *(["-b:a", "160k", "-af", "aresample=async=1:first_pts=0:min_hard_comp=0.100"] if transcode_audio else []),
+            "-movflags", "frag_keyframe+empty_moov+faststart",
+            "-f", "mp4", "pipe:1",
+            "-max_muxing_queue_size", "1024",
+        ]
+        return args
+    cmd = _remux_cmd_override()
+    return StreamingResponse(_pipe_async(cmd), media_type="video/mp4", headers={"Cache-Control": "no-store"})
 
 @router.get("/{file_id}/auto")
 async def stream_auto(
     file_id: str,
     request: Request,
+    aidx: Optional[int] = Query(None),
+    alang: Optional[str] = Query(None),
     db: AsyncSession = Depends(get_db),
     user=Depends(get_current_user),
 ):
@@ -478,7 +813,12 @@ async def stream_auto(
         raise HTTPException(status_code=404, detail="Missing media file on disk")
 
     caps = browser_caps(request.headers.get("user-agent", ""))
-    info = ffprobe_streams(path)
+    info = await ffprobe_streams(path)
+    # Persist to DB for future fast decisions
+    try:
+        await _maybe_persist_probe(db, mf, path, info)
+    except Exception:
+        pass
 
     # Truly direct-playable? Let /file handle Range.
     if _is_direct_play_ok(path, info, caps):
@@ -488,6 +828,22 @@ async def stream_auto(
     copy_video = _can_copy_video(info, caps) and not (request.query_params.get("nocopy", "").lower() in {"1", "true", "yes"})
     transcode_audio = (info.get("acodec") or "").lower() not in {"aac", "mp3"}
 
-    cmd = _remux_cmd(path, copy_video=copy_video, transcode_audio_to_aac=transcode_audio)
+    a_map = _pick_audio_map_for_path(path, forced_idx=aidx, preferred_lang=alang)
+    def _remux_cmd_override():
+        threads = os.getenv("FFMPEG_THREADS", "2")
+        args = [
+            ffmpeg_exe(), "-nostdin", "-hide_banner", "-loglevel", "error",
+            "-fflags", "+genpts", "-avoid_negative_ts", "make_zero",
+            "-i", path, "-map", "0:v:0", "-map", a_map,
+            "-c:v", "copy" if copy_video else "libx264",
+            *(["-pix_fmt", "yuv420p", "-preset", os.getenv("FFMPEG_PRESET","veryfast"), "-crf", os.getenv("FFMPEG_CRF","23"), "-threads", threads] if not copy_video else []),
+            "-c:a", "copy" if not transcode_audio else "aac",
+            *(["-b:a", "160k", "-af", "aresample=async=1:first_pts=0:min_hard_comp=0.100"] if transcode_audio else []),
+            "-movflags", "frag_keyframe+empty_moov+faststart",
+            "-f", "mp4", "pipe:1",
+            "-max_muxing_queue_size", "1024",
+        ]
+        return args
+    cmd = _remux_cmd_override()
     hdr = {"Cache-Control": "no-store", "X-AMS-Path": "remux-copy" if copy_video else "remux-transcode"}
-    return StreamingResponse(_pipe(cmd), media_type="video/mp4", headers=hdr)
+    return StreamingResponse(_pipe_async(cmd), media_type="video/mp4", headers=hdr)

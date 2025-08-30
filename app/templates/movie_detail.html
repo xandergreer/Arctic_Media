@@ -18,7 +18,7 @@
             {% if ej.get('genres') %}<div class="genres">{{ ", ".join(ej['genres']) }}</div>{% endif %}
             <div class="actions">
                 {% if files %}
-                <button id="playBtn" class="btn primary" data-file-id="{{ files[0].id }}"
+                <button id="playBtn" class="btn primary" data-file-id="{{ files[0].id }}" data-item-id="{{ item.id }}"
                     data-title="{{ item.title|e }}">▶ Play</button>
                 {% endif %}
                 <a class="btn" href="/movies">Back to Movies</a>
@@ -46,7 +46,7 @@
         <div class="player-area">
             <!-- Plyr-target video -->
             <video id="plyr" playsinline controls preload="metadata" poster="{{ poster }}"
-                data-file-id="{{ files[0].id }}" data-title="{{ item.title|e }}"></video>
+                data-file-id="{{ files[0].id }}" data-item-id="{{ item.id }}" data-title="{{ item.title|e }}"></video>
         </div>
     </section>
     {% endif %}
@@ -57,7 +57,7 @@
 <script src="https://cdn.plyr.io/3.7.8/plyr.polyfilled.js" nonce="{{ request.state.csp_nonce }}"></script>
 
 <!-- Our controller (loads hls.min.js on demand) -->
-<script src="/static/js/player.js" nonce="{{ request.state.csp_nonce }}"></script>
+<script src="/static/js/player.js?v={{ ASSET_V }}" nonce="{{ request.state.csp_nonce }}"></script>
 
 <style>
     .movie-detail .hero {

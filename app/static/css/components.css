@@ -516,3 +516,10 @@ select.input:focus {
 .file-row__cta {
     color: var(--link);
 }
+/* Sidebar items */
+.sidebar .s-item {
+  display:block; padding:8px 12px; border-radius:8px; color: var(--text-dim); text-decoration:none;
+}
+.sidebar .s-item:hover { background:#1a1a1a; color:#fff; }
+.sidebar .s-item.active { background:#1f1f1f; border:1px solid var(--border); color:#fff; }
+

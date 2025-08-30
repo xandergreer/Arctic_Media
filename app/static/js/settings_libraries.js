@@ -320,19 +320,51 @@ document.addEventListener('DOMContentLoaded', () => {
 
         if (act === 'scan') {
             const prev = btn.textContent;
-            btn.disabled = true; btn.textContent = 'Scanning…'; btn.setAttribute('aria-busy', 'true');
+            btn.disabled = true; btn.textContent = 'Queued…'; btn.setAttribute('aria-busy', 'true');
             try {
-                const r = await fetch(`/libraries/${id}/scan`, { method: 'POST', credentials: 'same-origin' });
-                const data = await r.json().catch(() => ({}));
-                if (!r.ok) throw new Error('Scan failed');
-                const { added = 0, updated = 0, skipped = 0, discovered = 0, known_paths = 0, note = '' } = data;
-                alert(note === 'path_missing'
-                    ? 'Scan aborted: library path not found.'
-                    : `Scan complete: +${added} added, ${updated} updated, ${skipped} skipped (saw ${discovered}, known ${known_paths})`);
-                reloadLibraries();
+                // queue background job and poll
+                const rq = await fetch(`/libraries/${id}/scan?background=true`, { method: 'POST', credentials: 'same-origin' });
+                const jr = await rq.json().catch(() => ({}));
+                if (rq.ok && jr?.queued && jr?.job_id) {
+                    const jobId = jr.job_id;
+                    let stop = false;
+                    async function poll() {
+                        if (stop) return;
+                        try {
+                            const r = await fetch(`/jobs/${jobId}`, { headers: { 'Accept': 'application/json' }, credentials: 'same-origin', cache: 'no-store' });
+                            if (!r.ok) throw new Error('poll failed');
+                            const j = await r.json();
+                            const p = (j.total && j.total > 0) ? Math.min(100, Math.floor((j.progress || 0) * 100 / j.total)) : 0;
+                            btn.textContent = (j.status === 'running') ? `Scanning ${p}%` : (j.status === 'queued' ? 'Queued…' : (j.status || '…'));
+                            if (j.status === 'done') {
+                                stop = true;
+                                const stats = j.result || {};
+                                const { added = 0, updated = 0, skipped = 0, discovered = 0, known_paths = 0, note = '' } = stats;
+                                alert(note === 'path_missing'
+                                    ? 'Scan aborted: library path not found.'
+                                    : `Scan complete: +${added} added, ${updated} updated, ${skipped} skipped (saw ${discovered}, known ${known_paths})`);
+                                reloadLibraries();
+                                btn.removeAttribute('aria-busy'); btn.disabled = false; btn.textContent = prev || 'Scan';
+                                return;
+                            }
+                        } catch (_) {}
+                        setTimeout(poll, 1000);
+                    }
+                    poll();
+                } else {
+                    // fallback to synchronous scan
+                    const r = await fetch(`/libraries/${id}/scan`, { method: 'POST', credentials: 'same-origin' });
+                    const data = await r.json().catch(() => ({}));
+                    if (!r.ok) throw new Error('Scan failed');
+                    const { added = 0, updated = 0, skipped = 0, discovered = 0, known_paths = 0, note = '' } = data;
+                    alert(note === 'path_missing'
+                        ? 'Scan aborted: library path not found.'
+                        : `Scan complete: +${added} added, ${updated} updated, ${skipped} skipped (saw ${discovered}, known ${known_paths})`);
+                    reloadLibraries();
+                    btn.removeAttribute('aria-busy'); btn.disabled = false; btn.textContent = prev || 'Scan';
+                }
             } catch (err) {
-                alert(err.message || 'Scan failed');
-            } finally {
+                alert(err?.message || 'Scan failed');
                 btn.removeAttribute('aria-busy'); btn.disabled = false; btn.textContent = prev || 'Scan';
             }
         }
