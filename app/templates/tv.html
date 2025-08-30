@@ -2,11 +2,11 @@
 {% block title %}TV Shows • Arctic{% endblock %}
 
 {% block content %}
-<div class="container">
     <h1>TV Shows</h1>
+    <div class="muted">{{ count or (items|length) }} titles</div>
 
-    <div class="grid">
-        {% for s in (shows or items) %}
+    <div id="infinite-grid" class="grid" data-kind="tv" data-endpoint="/api/tv" data-page="{{ page or 1 }}" data-total-pages="{{ total_pages or 1 }}" data-page-size="{{ page_size or 60 }}">
+        {% for s in items %}
         {% set meta = s.extra_json or {} %}
         {% set poster = meta.get('poster') or s.poster_url or '/static/img/placeholder.png' %}
         <a class="card" href="/show/{{ s.id }}" title="{{ s.title }}">
@@ -20,5 +20,9 @@
         <p>No TV shows indexed yet.</p>
         {% endfor %}
     </div>
-</div>
+    <div id="infinite-sentinel" style="height: 1px;"></div>
+{% block scripts %}
+{{ super() }}
+<script src="/static/js/infinite.js?v={{ ASSET_V }}" nonce="{{ request.state.csp_nonce }}"></script>
+{% endblock %}
 {% endblock %}

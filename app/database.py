@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import (
     async_sessionmaker,
 )
 from sqlalchemy.orm import declarative_base
+from sqlalchemy import event
 from .config import settings
 
 for name in ("sqlalchemy.engine", "sqlalchemy.pool"):
@@ -31,7 +32,24 @@ def get_engine() -> AsyncEngine:
             echo=False,
             future=True,
             pool_pre_ping=True,
+            connect_args={"timeout": 30},  # reduce lock waits; seconds
         )
+        # Apply SQLite pragmas on each new connection to improve concurrency
+        try:
+            def _set_sqlite_pragmas(dbapi_conn, _record):
+                try:
+                    cur = dbapi_conn.cursor()
+                    cur.execute("PRAGMA journal_mode=WAL;")
+                    cur.execute("PRAGMA synchronous=NORMAL;")
+                    cur.execute("PRAGMA temp_store=MEMORY;")
+                    cur.execute("PRAGMA busy_timeout=30000;")
+                    cur.close()
+                except Exception:
+                    pass
+
+            event.listen(_engine.sync_engine, "connect", _set_sqlite_pragmas)
+        except Exception:
+            pass
     return _engine
 
 def get_sessionmaker() -> async_sessionmaker[AsyncSession]:
@@ -50,6 +68,19 @@ async def init_db() -> None:
     engine = get_engine()
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        # Ensure helpful indexes exist (idempotent for SQLite)
+        try:
+            await conn.exec_driver_sql(
+                "CREATE INDEX IF NOT EXISTS ix_media_items_created_at ON media_items (created_at)"
+            )
+        except Exception:
+            pass
+        try:
+            await conn.exec_driver_sql(
+                "CREATE INDEX IF NOT EXISTS ix_media_files_item_created ON media_files (media_item_id, created_at)"
+            )
+        except Exception:
+            pass
 
 async def get_db() -> AsyncGenerator[AsyncSession, None]:
     Session = get_sessionmaker()

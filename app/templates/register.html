@@ -1,38 +1,34 @@
-<!-- app/templates/register.html -->
-<!doctype html>
-<html>
+﻿{% extends "base.html" %}
+{% block title %}Register - Arctic{% endblock %}
 
-<head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width,initial-scale=1">
-    <title>Register • Arctic</title>
-    <link rel="stylesheet" href="/static/css/base.css">
-    <link rel="stylesheet" href="/static/css/components.css">
-    <link rel="stylesheet" href="/static/css/pages.css">
-</head>
-
-<body>
-    <div class="container" style="max-width:420px">
-        <h1>Create account</h1>
-        <form method="post" action="/auth/register" class="form-grid">
-            <label>Email
-                <input class="input" type="email" name="email" required>
-            </label>
-            <label>Username
-                <input class="input" type="text" name="username" required>
-            </label>
-            <label>Password
-                <input class="input" type="password" name="password" required>
-            </label>
-            <div class="row-actions">
-                <button class="btn btn-primary" type="submit">Create account</button>
-                <a class="btn btn-ghost" href="/login">Back to sign in</a>
-            </div>
-        </form>
-        <p id="msg"></p>
-        <p><a href="/login">Already have an account? Log in</a></p>
+{% block content %}
+<div class="auth-wrap">
+  <div class="auth-card">
+    <div class="auth-brand">
+      <img src="{{ LOGO_STACKED }}" alt="{{ BRAND }}">
     </div>
-    <script src="/static/js/auth.js"></script>
-</body>
 
-</html>
+    <h1 class="auth-title">Create account</h1>
+    <p class="auth-sub">Join your {{ BRAND }}</p>
+
+    <form method="post" action="/auth/register" class="form-grid">
+      <label for="email">Email</label>
+      <input class="input" id="email" type="email" name="email" autocomplete="email" required>
+
+      <label for="username">Username</label>
+      <input class="input" id="username" type="text" name="username" autocomplete="username" required>
+
+      <label for="password">Password</label>
+      <input class="input" id="password" type="password" name="password" autocomplete="new-password" required>
+
+      <div class="row-actions">
+        <button class="btn btn-primary" type="submit">Create account</button>
+        <a class="btn btn-ghost" href="/login">Back to sign in</a>
+      </div>
+
+      <div id="msg" class="muted" style="margin-top:8px;"></div>
+    </form>
+  </div>
+</div>
+<script src="/static/js/auth.js"></script>
+{% endblock %}

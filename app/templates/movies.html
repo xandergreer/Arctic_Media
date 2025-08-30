@@ -2,11 +2,10 @@
 {% block title %}Movies • Arctic{% endblock %}
 
 {% block content %}
-<div class="container">
     <h1>Movies</h1>
-    <div class="muted">{{ items|length }} titles</div>
+    <div class="muted">{{ count or (items|length) }} titles</div>
 
-    <div class="grid">
+    <div id="infinite-grid" class="grid" data-kind="movie" data-endpoint="/api/movies" data-page="{{ page or 1 }}" data-total-pages="{{ total_pages or 1 }}" data-page-size="{{ page_size or 60 }}">
         {% for m in items %}
         {% set ej = m.extra_json or {} %}
         {% set poster = ej.get('poster') or m.poster_url or '/static/img/placeholder.png' %}
@@ -19,5 +18,9 @@
         </a>
         {% endfor %}
     </div>
-</div>
+    <div id="infinite-sentinel" style="height: 1px;"></div>
+{% block scripts %}
+{{ super() }}
+<script src="/static/js/infinite.js?v={{ ASSET_V }}" nonce="{{ request.state.csp_nonce }}"></script>
+{% endblock %}
 {% endblock %}

@@ -15,7 +15,7 @@
             {% if ej.get('overview') %}<p class="hero-overview">{{ ej['overview'] }}</p>{% endif %}
             <div class="actions">
                 {% if first_play_file_id %}
-                <button id="playBtn" class="btn primary" data-file-id="{{ first_play_file_id }}"
+                <button id="playBtn" class="btn primary" data-file-id="{{ first_play_file_id }}" data-item-id="{{ item.id }}"
                     data-title="{{ item.title|e }}">▶ Play</button>
                 {% endif %}
                 <a class="btn" href="/tv">Back to TV</a>
@@ -34,7 +34,7 @@
         </div>
         <div class="player-area">
             <video id="plyr" playsinline controls preload="metadata" poster="{{ poster }}" {% if first_play_file_id
-                %}data-file-id="{{ first_play_file_id }}" data-title="{{ item.title|e }}" {% endif %}></video>
+                %}data-file-id="{{ first_play_file_id }}" data-item-id="{{ item.id }}" data-title="{{ item.title|e }}" {% endif %}></video>
         </div>
     </section>
 
@@ -75,7 +75,7 @@
 
 <link rel="stylesheet" href="https://cdn.plyr.io/3.7.8/plyr.css">
 <script src="https://cdn.plyr.io/3.7.8/plyr.polyfilled.js" nonce="{{ request.state.csp_nonce }}"></script>
-<script src="/static/js/player.js" nonce="{{ request.state.csp_nonce }}"></script>
+<script src="/static/js/player.js?v={{ ASSET_V }}" nonce="{{ request.state.csp_nonce }}"></script>
 
 <style>
     .show-detail .hero {

@@ -4,7 +4,7 @@ import os
 import asyncio
 import logging
 import re
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Dict, List, Optional, Set, Tuple, Awaitable, Callable
 
 from sqlalchemy import select, func
 from sqlalchemy.exc import IntegrityError
@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from .config import settings
 from .metadata import enrich_library
+from .streaming import ffprobe_streams  # reuse async ffprobe helper
 from .models import Library, MediaItem, MediaFile, MediaKind
 from .utils import (
     is_video_file,
@@ -130,7 +131,11 @@ async def _get_or_create_item(
 # movie scanner
 # ---------------------------------------------------------------------------
 
-async def scan_movie_library(session: AsyncSession, library: Library) -> dict:
+async def scan_movie_library(
+    session: AsyncSession,
+    library: Library,
+    progress_cb: Optional[Callable[[int, int], Awaitable[None]]] = None,
+) -> dict:
     """
     Scan a movie library directory for video files and create MediaItems + MediaFiles.
     Skips files that cannot be parsed into a sensible title.
@@ -148,9 +153,13 @@ async def scan_movie_library(session: AsyncSession, library: Library) -> dict:
     discovered = len(all_paths)
     known_paths = len(existing_paths)
 
+    processed = 0
     for path in all_paths:
         if path in existing_paths:
             skipped += 1
+            processed += 1
+            if progress_cb and processed % 50 == 0:
+                await progress_cb(processed, discovered)
             continue
 
         parsed: Optional[Tuple[str, Optional[int]]] = parse_movie_from_path(path)
@@ -182,8 +191,30 @@ async def scan_movie_library(session: AsyncSession, library: Library) -> dict:
             await session.rollback()
             skipped += 1
 
+        # Probe codecs/dimensions and persist into MediaFile for faster future playback decisions
+        try:
+            info = await ffprobe_streams(path)
+            ext = os.path.splitext(path)[1].lower().lstrip('.') or None
+            if info or ext:
+                mf.container = ext
+                mf.vcodec = info.get('vcodec') or mf.vcodec
+                mf.acodec = info.get('acodec') or mf.acodec
+                ch = info.get('channels'); mf.channels = int(ch) if ch else mf.channels
+                w = info.get('width'); mf.width = int(w) if w else mf.width
+                h = info.get('height'); mf.height = int(h) if h else mf.height
+                br = info.get('bitrate'); mf.bitrate = int(br) if br else mf.bitrate
+                try:
+                    st = os.stat(path); mf.size_bytes = int(getattr(st, 'st_size', 0))
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
         if (added + updated) % 200 == 0:
             await session.commit()
+        processed += 1
+        if progress_cb and processed % 50 == 0:
+            await progress_cb(processed, discovered)
 
     # final commit after file loop
     await session.commit()
@@ -211,7 +242,11 @@ async def scan_movie_library(session: AsyncSession, library: Library) -> dict:
 # TV scanner
 # ---------------------------------------------------------------------------
 
-async def scan_tv_library(session: AsyncSession, library: Library) -> dict:
+async def scan_tv_library(
+    session: AsyncSession,
+    library: Library,
+    progress_cb: Optional[Callable[[int, int], Awaitable[None]]] = None,
+) -> dict:
     """
     Scan a TV library. Creates show -> season -> episode hierarchy.
     """
@@ -227,9 +262,13 @@ async def scan_tv_library(session: AsyncSession, library: Library) -> dict:
     discovered = len(all_paths)
     known_paths = len(existing_paths)
 
+    processed = 0
     for path in all_paths:
         if path in existing_paths:
             skipped += 1
+            processed += 1
+            if progress_cb and processed % 50 == 0:
+                await progress_cb(processed, discovered)
             continue
 
         try:
@@ -286,8 +325,30 @@ async def scan_tv_library(session: AsyncSession, library: Library) -> dict:
             await session.rollback()
             skipped += 1
 
+        # Probe codecs/dimensions and persist into MediaFile for faster future playback decisions
+        try:
+            info = await ffprobe_streams(path)
+            ext = os.path.splitext(path)[1].lower().lstrip('.') or None
+            if info or ext:
+                mf.container = ext
+                mf.vcodec = info.get('vcodec') or mf.vcodec
+                mf.acodec = info.get('acodec') or mf.acodec
+                ch = info.get('channels'); mf.channels = int(ch) if ch else mf.channels
+                w = info.get('width'); mf.width = int(w) if w else mf.width
+                h = info.get('height'); mf.height = int(h) if h else mf.height
+                br = info.get('bitrate'); mf.bitrate = int(br) if br else mf.bitrate
+                try:
+                    st = os.stat(path); mf.size_bytes = int(getattr(st, 'st_size', 0))
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
         if (added + updated) % 200 == 0:
             await session.commit()
+        processed += 1
+        if progress_cb and processed % 50 == 0:
+            await progress_cb(processed, discovered)
 
     await session.commit()
 

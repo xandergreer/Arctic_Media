@@ -5,6 +5,7 @@ import os
 import re
 from typing import List, Optional
 
+import asyncio
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
@@ -14,9 +15,9 @@ from sqlalchemy.exc import IntegrityError
 
 from .auth import get_current_user, require_admin
 from .config import settings
-from .database import get_db
+from .database import get_db, get_sessionmaker
 from .metadata import enrich_library
-from .models import Library, MediaFile, MediaItem, MediaKind
+from .models import Library, MediaFile, MediaItem, MediaKind, BackgroundJob
 from .scanner import scan_movie_library, scan_tv_library
 from .schemas import LibraryOut
 from .utils import guess_title_year, normalize_sort  # (no slugify import here)
@@ -225,6 +226,88 @@ async def _repair_tv_episodes(db: AsyncSession, library_id: str) -> dict:
     return {"created_episodes": created_eps, "moved_files": moved_files}
 
 
+# ---- fire-and-forget helpers ----
+async def _bg_scan_library(library_id: str, job_id: str | None = None) -> None:
+    """Run a library scan in the background using a fresh DB session."""
+    Session = get_sessionmaker()
+    async with Session() as db:
+        # mark job running
+        if job_id:
+            job = (await db.execute(select(BackgroundJob).where(BackgroundJob.id == job_id))).scalars().first()
+            if job:
+                job.status = "running"
+                job.message = "Scanning library"
+                await db.commit()
+        lib = (await db.execute(
+            select(Library).where(Library.id == library_id)
+        )).scalars().first()
+        if not lib:
+            return
+        # progress callback updates job
+        async def _progress(processed: int, total: int):
+            if not job_id:
+                return
+            j = (await db.execute(select(BackgroundJob).where(BackgroundJob.id == job_id))).scalars().first()
+            if j:
+                j.progress = processed
+                j.total = total
+                j.message = f"Scanning {processed}/{total}"
+                await db.commit()
+
+        stats = {}
+        if lib.type == "movie":
+            stats = await scan_movie_library(db, lib, progress_cb=_progress)
+        elif lib.type == "tv":
+            stats = await scan_tv_library(db, lib, progress_cb=_progress)
+        await db.commit()
+
+        if job_id:
+            job = (await db.execute(select(BackgroundJob).where(BackgroundJob.id == job_id))).scalars().first()
+            if job:
+                job.status = "done"
+                job.message = "Scan complete"
+                job.result = stats
+                await db.commit()
+
+async def _bg_refresh_metadata(library_id: str, force: bool, only_missing: bool, job_id: str | None = None) -> None:
+    Session = get_sessionmaker()
+    async with Session() as db:
+        if job_id:
+            job = (await db.execute(select(BackgroundJob).where(BackgroundJob.id == job_id))).scalars().first()
+            if job:
+                job.status = "running"
+                job.message = "Refreshing metadata"
+                await db.commit()
+
+        async def _progress(processed: int, total: int):
+            if not job_id:
+                return
+            j = (await db.execute(select(BackgroundJob).where(BackgroundJob.id == job_id))).scalars().first()
+            if j:
+                j.progress = processed
+                j.total = total
+                j.message = f"Refreshing {processed}/{total}"
+                await db.commit()
+
+        stats = await enrich_library(
+            db,
+            settings.TMDB_API_KEY,
+            library_id,
+            limit=5000,
+            force=force,
+            only_missing=only_missing,
+            progress_cb=_progress,
+        )
+        await db.commit()
+        if job_id:
+            job = (await db.execute(select(BackgroundJob).where(BackgroundJob.id == job_id))).scalars().first()
+            if job:
+                job.status = "done"
+                job.message = "Metadata refresh complete"
+                job.result = {"stats": stats}
+                await db.commit()
+
+
 # ───────────────────────── APIs ─────────────────────────
 
 @router.get("", response_model=List[LibraryOut])
@@ -316,6 +399,7 @@ async def delete_library(
 @router.post("/{library_id}/scan")
 async def scan_library(
     library_id: str,
+    background: bool = Query(False, description="Queue scan and return immediately"),
     db: AsyncSession = Depends(get_db),
     admin = Depends(require_admin),
 ):
@@ -324,6 +408,15 @@ async def scan_library(
     )).scalars().first()
     if not lib:
         raise HTTPException(status_code=404, detail="Library not found")
+
+    if background:
+        # create job row and queue background task
+        job = BackgroundJob(job_type="scan_library", library_id=library_id, status="queued", progress=0, total=None)
+        db.add(job)
+        await db.commit()
+        await db.refresh(job)
+        asyncio.create_task(_bg_scan_library(library_id, job_id=job.id))
+        return {"ok": True, "queued": True, "job_id": job.id}
 
     if lib.type == "movie":
         stats = await scan_movie_library(db, lib)
@@ -344,6 +437,7 @@ async def refresh_metadata_endpoint(
     library_id: str,
     force: bool = Query(False, description="Re-match everything even if tmdb_id exists"),
     only_missing: bool = Query(True, description="Touch only items missing posters/backdrops"),
+    background: bool = Query(False, description="Queue metadata refresh and return immediately"),
     db: AsyncSession = Depends(get_db),
     admin = Depends(require_admin),
 ):
@@ -355,6 +449,14 @@ async def refresh_metadata_endpoint(
 
     if not settings.TMDB_API_KEY:
         raise HTTPException(status_code=400, detail="TMDB_API_KEY not configured")
+
+    if background:
+        job = BackgroundJob(job_type="refresh_metadata", library_id=library_id, status="queued", progress=0, total=None)
+        db.add(job)
+        await db.commit()
+        await db.refresh(job)
+        asyncio.create_task(_bg_refresh_metadata(library_id, force=force, only_missing=only_missing, job_id=job.id))
+        return {"ok": True, "queued": True, "job_id": job.id}
 
     stats = await enrich_library(
         db,

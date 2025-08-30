@@ -35,6 +35,8 @@ DEFAULTS = {
         "hwaccel": "auto",             # "auto"|"none"|"vaapi"|"qsv"|"nvenc"
         "max_transcodes": 2,
         "prefer_remux": True,
+        "preferred_audio_lang": "eng",  # IETF/ISO code; e.g., eng/en/es/spa
+        "hls_container": "auto",       # "auto"|"fmp4"|"ts"
     },
     "server": {
         "server_host": getattr(cfg, "HOST", "0.0.0.0"),
@@ -87,6 +89,8 @@ class TranscoderSettings(BaseModel):
     hwaccel: Literal["auto", "none", "vaapi", "qsv", "nvenc"] = "auto"
     max_transcodes: int = 2
     prefer_remux: bool = True
+    preferred_audio_lang: str = Field("eng", description="Preferred audio language (e.g., eng, en, spa, es)")
+    hls_container: Literal["auto", "fmp4", "ts"] = "auto"
 
 class ServerSettings(BaseModel):
     server_host: str = Field(default="0.0.0.0", description="Server host binding")

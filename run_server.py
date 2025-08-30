@@ -57,21 +57,39 @@ if __name__ == "__main__":
             print(f"🔒 SSL enabled with certificate: {ssl_cert_file}")
             print(f"   Access via: https://{host}:{port}")
             
-            # no reload, no workers; single-process is best for a desktop EXE
-            uvicorn.run(
-                app, 
-                host=host, 
-                port=port, 
-                log_level="info",
-                ssl_certfile=ssl_cert_file,
-                ssl_keyfile=ssl_key_file
-            )
+            # Prefer Hypercorn for HTTP/2 if available; fallback to Uvicorn
+            try:
+                from hypercorn.config import Config as HyperConfig
+                from hypercorn.asyncio import serve as hyper_serve
+
+                cfg = HyperConfig()
+                cfg.bind = [f"{host}:{port}"]
+                cfg.certfile = ssl_cert_file
+                cfg.keyfile = ssl_key_file
+                cfg.alpn_protocols = ["h2", "http/1.1"]
+                cfg.keep_alive_timeout = 20
+                print("[server] Using Hypercorn (HTTP/2 enabled)")
+                asyncio.run(hyper_serve(app, cfg))
+            except Exception as e:
+                print(f"[server] Hypercorn unavailable ({e!s}); falling back to Uvicorn (HTTP/1.1)")
+                # no reload, no workers; single-process is best for a desktop EXE
+                uvicorn.run(
+                    app, 
+                    host=host, 
+                    port=port, 
+                    log_level="info",
+                    proxy_headers=True,
+                    forwarded_allow_ips="*",
+                    timeout_keep_alive=20,
+                    ssl_certfile=ssl_cert_file,
+                    ssl_keyfile=ssl_key_file
+                )
         else:
             print("⚠️  SSL files not found, falling back to HTTP")
             print(f"   Certificate file: {ssl_cert_file} - {'exists' if os.path.exists(ssl_cert_file) else 'missing'}")
             print(f"   Key file: {ssl_key_file} - {'exists' if os.path.exists(ssl_key_file) else 'missing'}")
-            uvicorn.run(app, host=host, port=port, log_level="info")
+            uvicorn.run(app, host=host, port=port, log_level="info", proxy_headers=True, forwarded_allow_ips="*", timeout_keep_alive=20)
     else:
         print(f"🌐 HTTP mode - Access via: http://{host}:{port}")
         # no reload, no workers; single-process is best for a desktop EXE
-        uvicorn.run(app, host=host, port=port, log_level="info")
+        uvicorn.run(app, host=host, port=port, log_level="info", proxy_headers=True, forwarded_allow_ips="*", timeout_keep_alive=20)

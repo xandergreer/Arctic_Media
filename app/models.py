@@ -8,7 +8,7 @@ from typing import List, Optional
 
 from sqlalchemy import (
     String, Integer, ForeignKey, Enum, Boolean, DateTime, LargeBinary,
-    UniqueConstraint, JSON, BigInteger, func, Index  # <- add Index
+    UniqueConstraint, JSON, BigInteger, func, Index
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -316,6 +316,24 @@ class ScheduledTask(Base):
 
     last_run_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     next_run_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), index=True)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+# ---- Background Jobs (ad-hoc scans/refreshes) ----
+class BackgroundJob(Base):
+    __tablename__ = "background_jobs"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    job_type: Mapped[str] = mapped_column(String(40), index=True)  # e.g., scan_library, refresh_metadata
+    library_id: Mapped[Optional[str]] = mapped_column(String(36), index=True)
+
+    status: Mapped[str] = mapped_column(String(24), default="queued", index=True)  # queued|running|done|failed
+    progress: Mapped[Optional[int]] = mapped_column(Integer, default=0)  # 0..total
+    total: Mapped[Optional[int]] = mapped_column(Integer)
+    message: Mapped[Optional[str]] = mapped_column(String(400))
+    result: Mapped[Optional[dict]] = mapped_column(JSON, default=None)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())

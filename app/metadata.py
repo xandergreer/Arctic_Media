@@ -3,9 +3,10 @@ from __future__ import annotations
 import re
 import time
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Awaitable, Callable
 
-import requests
+import asyncio
+import httpx
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -28,15 +29,29 @@ def _headers(api_key: str) -> Dict[str, str]:
 def _params(api_key: str) -> Dict[str, str]:
     return {} if api_key.count(".") >= 2 else {"api_key": api_key}
 
-def _get(api_key: str, path: str, params: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    time.sleep(0.11)
+async def _get(api_key: str, path: str, params: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """Non-blocking HTTP GET helper using httpx AsyncClient.
+
+    Respects TMDB rate limits with small async sleeps rather than blocking time.sleep.
+    """
+    await asyncio.sleep(0.11)
     try:
-        r = requests.get(f"{TMDB_API}/{path}", headers=_headers(api_key), params={**_params(api_key), **params}, timeout=15)
-        if r.status_code == 429:
-            time.sleep(0.6)
-            r = requests.get(f"{TMDB_API}/{path}", headers=_headers(api_key), params={**_params(api_key), **params}, timeout=15)
-        r.raise_for_status()
-        return r.json()
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            r = await client.get(
+                f"{TMDB_API}/{path}",
+                headers=_headers(api_key),
+                params={**_params(api_key), **params},
+            )
+            if r.status_code == 429:
+                # gentle backoff then one retry
+                await asyncio.sleep(0.6)
+                r = await client.get(
+                    f"{TMDB_API}/{path}",
+                    headers=_headers(api_key),
+                    params={**_params(api_key), **params},
+                )
+            r.raise_for_status()
+            return r.json()
     except Exception as e:
         log.warning("TMDB GET %s failed: %s", path, e)
         return None
@@ -152,12 +167,12 @@ async def _search_movie(api_key: str, title: str, year: Optional[int]) -> Option
     q1 = title
     q2 = _clean_title_for_search(title)
     for q, y in ((q1, year), (q2, year), (q2, None)):
-        payload = _get(api_key, "search/movie", {"query": q, "include_adult": True, **({"year": y} if y else {})})
+        payload = await _get(api_key, "search/movie", {"query": q, "include_adult": True, **({"year": y} if y else {})})
         if payload and payload.get("results"):
             mid = _best_movie_match(payload["results"], q, y)
             if mid:
                 return mid
-    multi = _get(api_key, "search/multi", {"query": q2 or q1, "include_adult": True})
+    multi = await _get(api_key, "search/multi", {"query": q2 or q1, "include_adult": True})
     if multi:
         movies = [r for r in (multi.get("results") or []) if r.get("media_type") == "movie"]
         mid = _best_movie_match(movies, q2 or q1, year)
@@ -170,13 +185,13 @@ async def _search_tv(api_key: str, title: str) -> Optional[int]:
     q1 = title
     q2 = _clean_title_for_search(title)
     for q in (q1, q2):
-        payload = _get(api_key, "search/tv", {"query": q, "include_adult": True})
+        payload = await _get(api_key, "search/tv", {"query": q, "include_adult": True})
         if payload and payload.get("results"):
             return payload["results"][0]["id"]
     return None
 
 async def _movie_detail_pack(api_key: str, tmdb_id: int) -> Dict[str, Any]:
-    d = _get(api_key, f"movie/{tmdb_id}", {"append_to_response": "credits,releases"})
+    d = await _get(api_key, f"movie/{tmdb_id}", {"append_to_response": "credits,releases"})
     if not d:
         return {}
     out = _pack_common(d)
@@ -191,7 +206,7 @@ async def _movie_detail_pack(api_key: str, tmdb_id: int) -> Dict[str, Any]:
     return out
 
 async def _tv_detail_pack(api_key: str, tmdb_id: int) -> Dict[str, Any]:
-    d = _get(api_key, f"tv/{tmdb_id}", {"append_to_response": "aggregate_credits"})
+    d = await _get(api_key, f"tv/{tmdb_id}", {"append_to_response": "aggregate_credits"})
     if not d:
         return {}
     out = _pack_common(d)
@@ -210,7 +225,7 @@ async def _tv_detail_pack(api_key: str, tmdb_id: int) -> Dict[str, Any]:
     return out
 
 async def _episode_detail_pack(api_key: str, show_id: int, season: int, episode: int) -> Dict[str, Any]:
-    d = _get(api_key, f"tv/{show_id}/season/{season}/episode/{episode}", {})
+    d = await _get(api_key, f"tv/{show_id}/season/{season}/episode/{episode}", {})
     if not d:
         return {}
     return {
@@ -237,6 +252,7 @@ async def enrich_library(
     limit: int = 2000,
     force: bool = False,
     only_missing: bool = False,
+    progress_cb: Optional[Callable[[int, int], Awaitable[None]]] = None,
 ) -> Dict[str, int]:
     if not api_key:
         log.info("TMDB_API_KEY not set; skipping enrichment")
@@ -253,7 +269,10 @@ async def enrich_library(
     matched = skipped = ep_filled = 0
     tv_id_cache: Dict[str, int] = {}
 
-    for it in items[:limit]:
+    items = items[:limit]
+    total = len(items)
+    processed = 0
+    for it in items:
         data = dict(it.extra_json or {})
         already = bool(data.get("tmdb_id"))
 
@@ -334,9 +353,14 @@ async def enrich_library(
                 it.extra_json = se
                 ep_filled += 1
 
+        processed += 1
+        if progress_cb and processed % 25 == 0:
+            await progress_cb(processed, total)
         if (matched + ep_filled) % 50 == 0:
             await session.commit()
 
     await session.commit()
+    if progress_cb:
+        await progress_cb(total, total)
     log.info("enrich done: matched=%d skipped=%d episodes=%d", matched, skipped, ep_filled)
     return {"matched": matched, "skipped": skipped, "episodes": ep_filled}

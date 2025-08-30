@@ -10,16 +10,13 @@
     let loaded = false;
 
     function openSidebar() {
-        document.body.classList.add('sidebar-open');
+        try { sidebar.setAttribute('aria-hidden', 'false'); } catch {}
         btn.setAttribute('aria-expanded', 'true');
-        if (!loaded) {
-            loaded = true;
-            loadSidebar();
-        }
+        if (!loaded) { loaded = true; loadSidebar(); }
     }
 
     function closeSidebar() {
-        document.body.classList.remove('sidebar-open');
+        try { sidebar.setAttribute('aria-hidden', 'true'); } catch {}
         btn.setAttribute('aria-expanded', 'false');
     }
 
@@ -75,6 +72,18 @@
         list.innerHTML =
             section('This Server', local || `<div class="s-item">No libraries</div>`) +
             (friends ? section('Friends', '') + friends : '');
+
+        // Mark current route as active
+        try {
+            const cur = location.pathname.replace(/\/$/, '');
+            list.querySelectorAll('a.s-item').forEach(a => {
+                const href = (a.getAttribute('href') || '').replace(/\/$/, '');
+                if (href && href === cur) {
+                    a.classList.add('active');
+                    a.setAttribute('aria-current', 'page');
+                }
+            });
+        } catch {}
     }
 })();
 
