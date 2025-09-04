@@ -1,15 +1,75 @@
-# run_server.py
+﻿# run_server.py
 import uvicorn
 import asyncio
 import os
+import socket
 from app.main import app
 from app.config import settings
 from app.database import init_db, get_db
 from app.models import ServerSetting
-from sqlalchemy import select
+from sqlalchemy import select, insert
+
+def _is_port_available(host: str, port: int) -> bool:
+    """Check if a TCP port is available for binding on the given host."""
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            s.bind((("0.0.0.0" if host == "0.0.0.0" else host), port))
+        return True
+    except Exception:
+        return False
+
+
+def _pick_first_run_port(host: str) -> int:
+    """Pick a safer default port for first run, avoiding common conflicts.
+
+    Respects an explicit PORT environment override if it is not a commonly used port.
+    Otherwise prefers settings.FIRST_RUN_PORT, then tries a small set of alternatives
+    until it finds a free port.
+    """
+    COMMON_PORTS = {8000, 8080, 8096, 8920, 32400, 3000, 5000, 5173, 8888, 7860}
+
+    # If user explicitly set PORT and it is not in the common/conflict set, prefer it
+    env_port = os.environ.get("PORT")
+    if env_port:
+        try:
+            p = int(env_port)
+            if 1 <= p <= 65535 and p not in COMMON_PORTS and _is_port_available(host, p):
+                return p
+        except Exception:
+            pass
+
+    candidates = []
+    # Primary candidate from settings (configurable)
+    try:
+        if getattr(settings, "FIRST_RUN_PORT", None):
+            candidates.append(int(settings.FIRST_RUN_PORT))
+    except Exception:
+        pass
+    # Reasonable additional fallbacks
+    candidates += [8085, 8754, 8181, 8585, 8283, 8899, 8686, 8822]
+
+    for p in candidates:
+        if p not in COMMON_PORTS and 1 <= p <= 65535 and _is_port_available(host, p):
+            return p
+
+    # Last resort: let OS choose ephemeral port, though this is not ideal for UX
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.bind((("0.0.0.0" if host == "0.0.0.0" else host), 0))
+            return s.getsockname()[1]
+    except Exception:
+        # Fallback to configured PORT
+        return int(getattr(settings, "PORT", 8085))
+
 
 async def get_server_config():
-    """Get server configuration from database or use defaults"""
+    """Get server configuration from database or use defaults.
+
+    If no server settings exist (first run), choose a safer default port to avoid
+    common conflicts (e.g., 8000) and persist this choice to the database so that
+    subsequent runs are stable.
+    """
     try:
         await init_db()
         async for db in get_db():
@@ -22,9 +82,10 @@ async def get_server_config():
                 config = server_settings.value
                 host = config.get("server_host", settings.HOST)
                 port = config.get("server_port", settings.PORT)
-                ssl_enabled = config.get("ssl_enabled", False)
-                ssl_cert_file = config.get("ssl_cert_file", "")
-                ssl_key_file = config.get("ssl_key_file", "")
+                # Fall back to env-backed SSL defaults when fields missing in DB
+                ssl_enabled = config.get("ssl_enabled", bool(getattr(settings, "SSL_ENABLED", False)))
+                ssl_cert_file = config.get("ssl_cert_file", getattr(settings, "SSL_CERT_FILE", ""))
+                ssl_key_file = config.get("ssl_key_file", getattr(settings, "SSL_KEY_FILE", ""))
                 
                 # Validate host - must be IP address, not domain name
                 if host and not host.startswith(('http://', 'https://')):
@@ -37,6 +98,25 @@ async def get_server_config():
                 else:
                     print(f"Warning: Host '{host}' contains protocol, using default")
                     return settings.HOST, port, ssl_enabled, ssl_cert_file, ssl_key_file
+            else:
+                # First run: pick a safer default port and persist it to DB
+                host = settings.HOST
+                port = _pick_first_run_port(host)
+                try:
+                    cfg = {
+                        "server_host": host,
+                        "server_port": int(port),
+                        "external_access": host == "0.0.0.0",
+                        "ssl_enabled": False,
+                        "ssl_cert_file": "",
+                        "ssl_key_file": "",
+                    }
+                    await db.execute(insert(ServerSetting).values(key="server", value=cfg))
+                    await db.commit()
+                except Exception:
+                    # Non-fatal if we cannot persist; we still return the picked port
+                    pass
+                return host, port, False, "", ""
             break
     except Exception as e:
         print(f"Warning: Could not load server settings from database: {e}")
@@ -54,7 +134,7 @@ if __name__ == "__main__":
     if ssl_enabled and ssl_cert_file and ssl_key_file:
         # Check if SSL files exist
         if os.path.exists(ssl_cert_file) and os.path.exists(ssl_key_file):
-            print(f"🔒 SSL enabled with certificate: {ssl_cert_file}")
+            print(f"ðŸ”’ SSL enabled with certificate: {ssl_cert_file}")
             print(f"   Access via: https://{host}:{port}")
             
             # Prefer Hypercorn for HTTP/2 if available; fallback to Uvicorn
@@ -85,11 +165,11 @@ if __name__ == "__main__":
                     ssl_keyfile=ssl_key_file
                 )
         else:
-            print("⚠️  SSL files not found, falling back to HTTP")
+            print("âš ï¸  SSL files not found, falling back to HTTP")
             print(f"   Certificate file: {ssl_cert_file} - {'exists' if os.path.exists(ssl_cert_file) else 'missing'}")
             print(f"   Key file: {ssl_key_file} - {'exists' if os.path.exists(ssl_key_file) else 'missing'}")
             uvicorn.run(app, host=host, port=port, log_level="info", proxy_headers=True, forwarded_allow_ips="*", timeout_keep_alive=20)
     else:
-        print(f"🌐 HTTP mode - Access via: http://{host}:{port}")
+        print(f"ðŸŒ HTTP mode - Access via: http://{host}:{port}")
         # no reload, no workers; single-process is best for a desktop EXE
         uvicorn.run(app, host=host, port=port, log_level="info", proxy_headers=True, forwarded_allow_ips="*", timeout_keep_alive=20)

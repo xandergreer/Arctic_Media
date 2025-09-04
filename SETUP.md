@@ -15,7 +15,7 @@ This guide is for users running the `ArcticMedia.exe` file.
 ### Step 1: Run the Application
 1. **Double-click** `ArcticMedia.exe`
 2. **Wait** for the server to start (you'll see console output)
-3. **Open** your browser to `http://localhost:8000`
+3. **Open** your browser to `http://localhost:8085`
 
 ### Step 2: Create Your Account
 1. Click **"Register"** on the login page
@@ -47,18 +47,18 @@ This guide is for users running the `ArcticMedia.exe` file.
   - Type: `ipconfig`
   - Look for "IPv4 Address" (usually 192.168.x.x)
 - **Access from other devices:**
-  - `http://YOUR_IP:8000`
-  - Example: `http://192.168.1.100:8000`
+  - `http://YOUR_IP:8085`
+  - Example: `http://192.168.1.100:8085`
 
 ### From the Internet
 1. **Configure your router:**
    - Access router admin (usually 192.168.1.1)
    - Find "Port Forwarding"
-   - Forward port 8000 to your computer's IP
+   - Forward port 8085 to your computer's IP
 2. **Find your public IP:**
    - Visit `whatismyipaddress.com`
 3. **Access remotely:**
-   - `http://YOUR_PUBLIC_IP:8000`
+   - `http://YOUR_PUBLIC_IP:8085`
 
 ## ⚙️ Configuration
 
@@ -82,9 +82,9 @@ This guide is for users running the `ArcticMedia.exe` file.
 ## 🔧 Troubleshooting
 
 ### Application Won't Start
-- **Check if port 8000 is in use:**
+- **Check if port 8085 is in use:**
   - Try changing the port in settings
-  - Or close other applications using port 8000
+  - Or close other applications using port 8085
 
 ### Can't Access from Other Devices
 - **Check Windows Firewall:**
@@ -106,12 +106,12 @@ This guide is for users running the `ArcticMedia.exe` file.
 
 ### Android/iOS
 - Open your mobile browser
-- Navigate to `http://YOUR_IP:8000`
+- Navigate to `http://YOUR_IP:8085`
 - The interface is mobile-optimized
 
 ### Smart TV
 - Most smart TVs have web browsers
-- Navigate to `http://YOUR_IP:8000`
+- Navigate to `http://YOUR_IP:8085`
 - Use your TV remote to navigate
 
 ## 🔒 Security Notes

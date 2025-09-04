@@ -15,8 +15,13 @@
             {% if ej.get('overview') %}<p class="hero-overview">{{ ej['overview'] }}</p>{% endif %}
             <div class="actions">
                 {% if first_play_file_id %}
-                <button id="playBtn" class="btn primary" data-file-id="{{ first_play_file_id }}" data-item-id="{{ item.id }}"
-                    data-title="{{ item.title|e }}">▶ Play</button>
+                <button id="playBtn" class="btn primary" data-file-id="{{ first_play_file_id }}"
+                    data-item-id="{{ item.id }}" data-title="{{ item.title|e }}">▶ Play</button>
+                {% endif %}
+                {% if user and user.is_admin %}
+                <button id="editShowBtn" class="btn" title="Edit metadata" style="display:inline-flex;align-items:center;gap:6px;">
+                    <span aria-hidden="true">✎</span> Edit
+                </button>
                 {% endif %}
                 <a class="btn" href="/tv">Back to TV</a>
             </div>
@@ -28,13 +33,22 @@
         <div class="player-bar">
             <div class="left"><strong>Now Playing:</strong> <span id="npTitle">{{ item.title }}</span></div>
             <div class="right">
+                {% if files|length > 1 %}
+                <select id="sourceSelect" class="select">
+                    {% for f in files %}
+                    <option value="{{ f.id }}" data-file-id="{{ f.id }}">{{ f.path.split('/')[-1].split('\\')[-1] }}
+                    </option>
+                    {% endfor %}
+                </select>
+                {% endif %}
                 <button id="minBtn" class="btn small" title="Minimize">–</button>
                 <button id="closeBtn" class="btn small" title="Close">✕</button>
             </div>
         </div>
         <div class="player-area">
             <video id="plyr" playsinline controls preload="metadata" poster="{{ poster }}" {% if first_play_file_id
-                %}data-file-id="{{ first_play_file_id }}" data-item-id="{{ item.id }}" data-title="{{ item.title|e }}" {% endif %}></video>
+                %}data-file-id="{{ first_play_file_id }}" data-item-id="{{ item.id }}" data-title="{{ item.title|e }}"
+                {% endif %}></video>
         </div>
     </section>
 
@@ -61,12 +75,16 @@
         {% for ep in episodes %}
         {% set eej = ep.extra_json or {} %}
         {% set still = eej.get('still') or ep.poster_url or poster %}
-        <button class="card ep-card" type="button" data-file-id="{{ ep.first_file_id }}" data-title="{{ ep.title|e }}">
+        <button class="card ep-card" type="button" data-file-id="{{ ep.first_file_id }}" data-title="{{ ep.title|e }}" style="position:relative;">
             <img loading="lazy" src="{{ still }}" alt="{{ ep.title }}">
             <div class="card-meta">
                 <div class="title">{{ "%02d" % (eej.get('episode') or loop.index) }} · {{ ep.title }}</div>
                 {% if eej.get('air_date') %}<div class="sub">{{ eej['air_date'] }}</div>{% endif %}
             </div>
+            {% if user and user.is_admin %}
+            <button class="btn small ep-edit" type="button" title="Edit episode" style="position:absolute;right:8px;top:8px;">✎</button>
+            <input type="hidden" class="ep-id" value="{{ ep.id }}">
+            {% endif %}
         </button>
         {% endfor %}
     </div>
@@ -159,4 +177,131 @@
         color: #fff
     }
 </style>
+{% if user and user.is_admin %}
+<div id="editShowModal" class="modal hidden">
+  <div class="modal-card" style="max-width:720px;width:100%">
+    <header class="modal-header" style="display:flex;justify-content:space-between;align-items:center;">
+      <h3>Edit Show</h3>
+      <button id="showClose" class="btn btn-ghost">Close</button>
+    </header>
+    <div class="modal-body" style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+      <label>Title
+        <input id="s-title" class="input" type="text" value="{{ item.title|e }}">
+      </label>
+      <label>TMDB ID
+        <input id="s-tmdb" class="input" type="number" value="{{ (ej.get('tmdb_id') if ej else '') }}" placeholder="e.g. 1399">
+      </label>
+      <label style="grid-column:1/-1;">Poster URL
+        <input id="s-poster" class="input" type="text" value="{{ poster }}">
+      </label>
+      <label style="grid-column:1/-1;">Backdrop URL
+        <input id="s-backdrop" class="input" type="text" value="{{ backdrop }}">
+      </label>
+      <label style="grid-column:1/-1;display:flex;align-items:center;gap:8px;">
+        <input id="s-refresh" type="checkbox"> <span>Refresh from TMDB (uses TMDB ID if provided, otherwise searches by title)</span>
+      </label>
+    </div>
+    <footer class="modal-footer" style="display:flex;justify-content:flex-end;gap:8px;margin-top:10px;">
+      <button id="s-save" class="btn btn-primary">Save</button>
+    </footer>
+  </div>
+  <div id="showBackdrop" class="modal-backdrop"></div>
+  <style>
+    .modal.hidden{display:none}
+    .modal{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;z-index:100}
+    .modal-card{position:relative;z-index:2;background:#151515;border:1px solid #333;border-radius:10px;padding:14px}
+    .modal-backdrop{position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:1}
+  </style>
+  <script nonce="{{ request.state.csp_nonce }}">
+    (function(){
+      const $=(s)=>document.querySelector(s);
+      const open=()=>$('#editShowModal')?.classList.remove('hidden');
+      const close=()=>$('#editShowModal')?.classList.add('hidden');
+      $('#editShowBtn')?.addEventListener('click', open);
+      $('#showClose')?.addEventListener('click', close);
+      $('#showBackdrop')?.addEventListener('click', close);
+      $('#s-save')?.addEventListener('click', async ()=>{
+        const body={
+          title: ($('#s-title')?.value||'').trim()||null,
+          tmdb_id: (parseInt($('#s-tmdb')?.value)||null),
+          poster_url: ($('#s-poster')?.value||'').trim()||null,
+          backdrop_url: ($('#s-backdrop')?.value||'').trim()||null,
+          refresh_from_tmdb: !!$('#s-refresh')?.checked,
+        };
+        try{ const r=await fetch(`/admin/media/{{ item.id }}`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+          if(!r.ok){ alert('Save failed'); return }
+          location.reload();
+        }catch(e){ alert('Save failed: '+e.message) }
+      });
+    })();
+  </script>
+</div>
+
+<div id="editEpModal" class="modal hidden">
+  <div class="modal-card" style="max-width:680px;width:100%">
+    <header class="modal-header" style="display:flex;justify-content:space-between;align-items:center;">
+      <h3>Edit Episode</h3>
+      <button id="epClose" class="btn btn-ghost">Close</button>
+    </header>
+    <div class="modal-body" style="display:grid;grid-template-columns:1fr;gap:12px;">
+      <input type="hidden" id="ep-id" value="">
+      <label>Title
+        <input id="e-title" class="input" type="text" value="">
+      </label>
+      <label>Still URL
+        <input id="e-still" class="input" type="text" value="">
+      </label>
+      <label style="display:flex;align-items:center;gap:8px;">
+        <input id="e-refresh" type="checkbox"> <span>Refresh from TMDB (requires show TMDB + season/episode numbers present)</span>
+      </label>
+    </div>
+    <footer class="modal-footer" style="display:flex;justify-content:flex-end;gap:8px;margin-top:10px;">
+      <button id="e-save" class="btn btn-primary">Save</button>
+    </footer>
+  </div>
+  <div id="epBackdrop" class="modal-backdrop"></div>
+  <style>
+    .modal.hidden{display:none}
+    .modal{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;z-index:100}
+    .modal-card{position:relative;z-index:2;background:#151515;border:1px solid #333;border-radius:10px;padding:14px}
+    .modal-backdrop{position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:1}
+  </style>
+  <script nonce="{{ request.state.csp_nonce }}">
+    (function(){
+      const qsa=(s)=>Array.from(document.querySelectorAll(s));
+      const $=(s)=>document.querySelector(s);
+      function open(){ $('#editEpModal')?.classList.remove('hidden'); }
+      function close(){ $('#editEpModal')?.classList.add('hidden'); }
+      $('#epClose')?.addEventListener('click', close);
+      $('#epBackdrop')?.addEventListener('click', close);
+      qsa('.ep-edit').forEach(btn=>{
+        btn.addEventListener('click', (ev)=>{
+          ev.stopPropagation(); ev.preventDefault();
+          const card = btn.closest('.ep-card');
+          const id = card.querySelector('.ep-id')?.value || '';
+          const title = card.getAttribute('data-title') || card.querySelector('.title')?.textContent || '';
+          const img = card.querySelector('img')?.getAttribute('src') || '';
+          $('#ep-id').value = id;
+          $('#e-title').value = title;
+          $('#e-still').value = img;
+          open();
+        });
+      });
+      $('#e-save')?.addEventListener('click', async ()=>{
+        const id = $('#ep-id').value;
+        if(!id) return close();
+        const body={
+          title: ($('#e-title')?.value||'').trim()||null,
+          poster_url: ($('#e-still')?.value||'').trim()||null,
+          refresh_from_tmdb: !!$('#e-refresh')?.checked,
+        };
+        try{ const r=await fetch(`/admin/media/${id}`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+          if(!r.ok){ alert('Save failed'); return }
+          location.reload();
+        }catch(e){ alert('Save failed: '+e.message) }
+      });
+    })();
+  </script>
+</div>
+{% endif %}
 {% endblock %}

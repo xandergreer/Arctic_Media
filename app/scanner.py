@@ -134,6 +134,9 @@ async def _get_or_create_item(
 async def scan_movie_library(
     session: AsyncSession,
     library: Library,
+    library_name: str,
+    library_type: str,
+    library_id: str,
     progress_cb: Optional[Callable[[int, int], Awaitable[None]]] = None,
 ) -> dict:
     """
@@ -221,13 +224,13 @@ async def scan_movie_library(
 
     log.info(
         "scan %s [%s]: discovered=%d known=%d added=%d skipped=%d updated=%d",
-        getattr(library, "name", library.id),
-        library.type,
+        library_name,
+        library_type,
         discovered, known_paths, added, skipped, updated
     )
 
     # Enrich with TMDB and write poster/backdrop through to columns
-    await enrich_library(session, settings.TMDB_API_KEY, library.id, limit=5000)
+    await enrich_library(session, settings.TMDB_API_KEY, library_id, limit=5000)
     await session.commit()
 
     return {
@@ -245,6 +248,9 @@ async def scan_movie_library(
 async def scan_tv_library(
     session: AsyncSession,
     library: Library,
+    library_name: str,
+    library_type: str,
+    library_id: str,
     progress_cb: Optional[Callable[[int, int], Awaitable[None]]] = None,
 ) -> dict:
     """
@@ -354,13 +360,13 @@ async def scan_tv_library(
 
     log.info(
         "scan %s [%s]: discovered=%d known=%d added=%d skipped=%d updated=%d",
-        getattr(library, "name", library.id),
-        library.type,
+        library_name,
+        library_type,
         discovered, known_paths, added, skipped, updated
     )
 
     # Enrich show/episode metadata and stills
-    await enrich_library(session, settings.TMDB_API_KEY, library.id, limit=5000)
+    await enrich_library(session, settings.TMDB_API_KEY, library_id, limit=5000)
     await session.commit()
 
     return {

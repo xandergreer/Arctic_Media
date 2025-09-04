@@ -119,6 +119,18 @@ async def login(request: Request, db: AsyncSession = Depends(get_db)):
     access = create_token({"sub": str(user.id), "typ": "access"}, expires_in=ACCESS_TOKEN_EXPIRE_SECONDS)
     csrf = new_csrf()
 
+    # If JSON requested (mobile/app clients), return JSON instead of redirect
+    accepts = (request.headers.get("accept") or "").lower()
+    if "application/json" in accepts:
+        resp = JSONResponse({
+            "ok": True,
+            "user": {"id": str(user.id), "username": user.username, "email": getattr(user, "email", None)},
+            "token": access,
+        })
+        _set_access_cookie(resp, access)
+        resp.set_cookie("am_csrf", csrf, httponly=False, samesite="lax", secure=bool(getattr(settings, "COOKIE_SECURE", False)), path="/")
+        return resp
+
     resp = RedirectResponse(url="/home", status_code=303)
     resp.set_cookie(ACCESS_COOKIE, access, httponly=True, samesite="lax", secure=bool(getattr(settings, "COOKIE_SECURE", False)), path="/")
     resp.set_cookie("am_csrf", csrf, httponly=False, samesite="lax", secure=bool(getattr(settings, "COOKIE_SECURE", False)), path="/")

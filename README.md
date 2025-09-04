@@ -17,7 +17,7 @@ A modern, self-hosted media server for your personal movie and TV show collectio
 ### 1. Download & Run
 1. Download `ArcticMedia.exe` from the releases
 2. Double-click to run
-3. Open your browser to `http://localhost:8000`
+3. Open your browser to `http://localhost:8085`
 
 ### 2. First Time Setup
 1. **Register** - Create your admin account
@@ -43,13 +43,13 @@ A modern, self-hosted media server for your personal movie and TV show collectio
 Access your media from anywhere:
 
 ### Local Network
-- Other devices on your network: `http://YOUR_IP:8000`
-- Example: `http://192.168.1.100:8000`
+- Other devices on your network: `http://YOUR_IP:8085`
+- Example: `http://192.168.1.100:8085`
 
 ### Internet Access
 1. **Port Forwarding** (Router setup)
-   - Forward port 8000 to your computer
-   - Access via: `http://YOUR_PUBLIC_IP:8000`
+   - Forward port 8085 to your computer
+   - Access via: `http://YOUR_PUBLIC_IP:8085`
 
 2. **Custom Domain** (Optional)
    - Set up domain in settings
@@ -58,7 +58,7 @@ Access your media from anywhere:
 ## ⚙️ Settings
 
 ### Server Configuration
-- **Port:** Change default port (8000)
+- **Port:** Change default port (8085)
 - **External Access:** Enable/disable network access
 - **Custom Domain:** Set your own domain
 

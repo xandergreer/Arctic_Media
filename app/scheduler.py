@@ -22,10 +22,14 @@ async def _run_job(db: AsyncSession, task: ScheduledTask):
             if lib_id:
                 lib = (await db.execute(select(Library).where(Library.id == lib_id))).scalars().first()
                 if lib:
+                    # Extract library attributes to avoid lazy loading issues
+                    library_name = lib.name
+                    library_type = lib.type
+                    library_id = lib.id
                     if lib.type == "movie":
-                        await scan_movie_library(db, lib)
+                        await scan_movie_library(db, lib, library_name, library_type, library_id)
                     elif lib.type == "tv":
-                        await scan_tv_library(db, lib)
+                        await scan_tv_library(db, lib, library_name, library_type, library_id)
         elif task.job_type == ScheduledJobType.refresh_metadata:
             lib_id = (task.payload or {}).get("library_id")
             if lib_id:

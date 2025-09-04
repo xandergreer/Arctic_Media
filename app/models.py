@@ -114,6 +114,7 @@ class MediaItem(Base):
     __table_args__ = (
     UniqueConstraint("library_id", "kind", "title", "year", name="uq_media_lib_kind_title_year"),
     Index("ix_item_sort_year_parent", "sort_title", "year", "parent_id"),
+    Index("ix_media_item_title", "title"),  # Index for search performance
     )   
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)

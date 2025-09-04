@@ -106,6 +106,77 @@ document.addEventListener('DOMContentLoaded', async () => {
         btn.classList.remove('is-loading'); btn.disabled = false;
     });
 
+    // Presets for quick configuration
+    document.getElementById('preset-local')?.addEventListener('click', () => {
+        if (!server) return;
+        const host = server.elements['server_host'];
+        const port = server.elements['server_port'];
+        const ext = server.elements['external_access'];
+        const ssl = server.elements['ssl_enabled'];
+        const cert = server.elements['ssl_cert_file'];
+        const key = server.elements['ssl_key_file'];
+        host.value = '127.0.0.1';
+        port.value = 8085;
+        ext.checked = false;
+        ssl.checked = false;
+        cert.value = '';
+        key.value = '';
+        document.getElementById('msg-server').textContent = 'Applied preset: local only (HTTP)';
+    });
+
+    document.getElementById('preset-https')?.addEventListener('click', () => {
+        if (!server) return;
+        const host = server.elements['server_host'];
+        const port = server.elements['server_port'];
+        const ext = server.elements['external_access'];
+        const ssl = server.elements['ssl_enabled'];
+        host.value = '0.0.0.0';
+        port.value = 443;
+        ext.checked = true;
+        ssl.checked = true;
+        document.getElementById('msg-server').textContent = 'Applied preset: HTTPS on 443';
+    });
+
+    // When SSL toggled, suggest a sensible port
+    server?.elements['ssl_enabled']?.addEventListener('change', (e) => {
+        const port = server.elements['server_port'];
+        const val = Number(port.value || 0);
+        if (e.target.checked) {
+            if (!val || val === 8000 || val === 8080 || val === 8085) port.value = 443;
+        } else {
+            if (val === 443) port.value = 8085;
+        }
+        updateQuickLinks();
+    });
+
+    // Update quick open links
+    function updateQuickLinks() {
+        if (!server) return;
+        const host = (server.elements['server_host'].value || '0.0.0.0');
+        const port = Number(server.elements['server_port'].value || 0) || (server.elements['ssl_enabled'].checked ? 443 : 8085);
+        const https = !!server.elements['ssl_enabled'].checked;
+        const scheme = https ? 'https' : 'http';
+        const local = `${scheme}://127.0.0.1:${port}`;
+        const domain = (document.querySelector('#form-remote input[name="public_base_url"]').value || '').trim();
+        const aLocal = document.getElementById('link-local');
+        const aDom = document.getElementById('link-domain');
+        if (aLocal) { aLocal.href = local; aLocal.textContent = local; }
+        if (aDom) {
+            if (domain) {
+                const url = domain.match(/^https?:\/\//) ? domain : `${scheme}://${domain}${port===443&&https?'':(':'+port)}`;
+                aDom.href = url; aDom.textContent = url; aDom.style.display='inline';
+            } else {
+                aDom.href = '#'; aDom.textContent = 'domain'; aDom.style.display='none';
+            }
+        }
+    }
+
+    // Initial link update after load
+    updateQuickLinks();
+    server?.elements['server_port']?.addEventListener('input', updateQuickLinks);
+    server?.elements['server_host']?.addEventListener('input', updateQuickLinks);
+    document.querySelector('#form-remote input[name="public_base_url"]')?.addEventListener('input', updateQuickLinks);
+
     // Restart server button
     document.getElementById('restart-server')?.addEventListener('click', async () => {
         if (!confirm('Restart the server? This will disconnect all users.')) return;

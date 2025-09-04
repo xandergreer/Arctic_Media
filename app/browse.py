@@ -69,6 +69,7 @@ async def movie_detail(
             "request": request,
             "item": item,
             "files": files,
+            "user": user,
             "title": f"{item.title or 'Movie'} – Arctic",
         },
     )

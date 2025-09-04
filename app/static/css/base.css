@@ -22,7 +22,8 @@
     --nav-pad-x: 20px;
     --nav-max: 1700px;
     --brand-gap: 1px;
-    --brand-nudge-x: -400px;
+    /* Keep brand visible next to the hamburger */
+    --brand-nudge-x: 0px;
     --menu-nudge-x: -8px;
     --menu-nudge-y: 0px;
 }
@@ -69,6 +70,7 @@ a:hover {
     background: #151515;
     border-bottom: 1px solid var(--border);
     z-index: 50;
+    overflow: visible;
 }
 
 .nav .container {
@@ -82,8 +84,8 @@ a:hover {
 .nav .nav-inner {
     display: flex;
     align-items: center;
-    /* vertical centering */
-    justify-content: space-between;
+    /* keep brand next to hamburger */
+    justify-content: flex-start;
     gap: var(--brand-gap);
     padding: var(--nav-pad-y) 0;
     padding-left: var(--nav-inner-x);
@@ -100,6 +102,8 @@ a:hover {
     display: flex;
     align-items: center;
     gap: 16px;
+    margin-left: auto;
+    /* push nav links to the right */
 }
 
 .nav .cluster a {
@@ -257,8 +261,7 @@ a:hover {
 
 .nav .brand img {
     display: block;
-    height: 24px;
-    /* adjust to taste */
+    height: var(--brand-word-h);
     width: auto;
 }
 

@@ -40,11 +40,13 @@ DEFAULTS = {
     },
     "server": {
         "server_host": getattr(cfg, "HOST", "0.0.0.0"),
-        "server_port": getattr(cfg, "PORT", 8000),
+        # Prefer FIRST_RUN_PORT for initial default to avoid conflicts on first startup
+        "server_port": getattr(cfg, "FIRST_RUN_PORT", getattr(cfg, "PORT", 8085)),
         "external_access": getattr(cfg, "HOST", "0.0.0.0") == "0.0.0.0",
-        "ssl_enabled": False,
-        "ssl_cert_file": "",
-        "ssl_key_file": "",
+        # Reflect env-backed SSL defaults so UI shows what's configured in .env
+        "ssl_enabled": bool(getattr(cfg, "SSL_ENABLED", False)),
+        "ssl_cert_file": getattr(cfg, "SSL_CERT_FILE", ""),
+        "ssl_key_file": getattr(cfg, "SSL_KEY_FILE", ""),
     },
 }
 

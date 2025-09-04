@@ -1,8 +1,17 @@
 <h1>Remote Access</h1>
+<div class="muted" style="margin-top:6px;">
+  - 0.0.0.0 is a bind address (listen on all interfaces); browse via 127.0.0.1 or your LAN IP.<br>
+  - For HTTPS, set certificate to your full chain (fullchain.pem) and matching private key.<br>
+  - Port 443 is standard HTTPS. If you choose it, allow it in Windows Firewall and forward it on your router.
+  </div>
 
 <!-- Server Configuration Section -->
 <section style="margin-top:24px;">
     <h2>Server Configuration</h2>
+    <div style="display:flex; gap:8px; margin:6px 0 12px 0; flex-wrap:wrap;">
+      <button type="button" class="btn btn-secondary" id="preset-local">Local only (127.0.0.1:8085, HTTP)</button>
+      <button type="button" class="btn btn-secondary" id="preset-https">HTTPS on 443 (0.0.0.0)</button>
+    </div>
     <form id="form-server" class="form-grid" style="grid-template-columns: repeat(3, minmax(220px, 1fr));">
         <label>Server Host
             <input type="text" name="server_host" class="input" placeholder="0.0.0.0"
@@ -10,7 +19,7 @@
         </label>
 
         <label>Server Port
-            <input type="number" name="server_port" class="input" placeholder="8000" min="1" max="65535">
+            <input type="number" name="server_port" class="input" placeholder="8085" min="1" max="65535">
         </label>
 
         <label class="check">
@@ -25,19 +34,22 @@
         <label style="grid-column: span 2;">SSL Certificate File
             <div style="display:flex; gap:8px; align-items:center;">
                 <input id="ssl-cert-input" type="text" name="ssl_cert_file" class="input" placeholder="certificate.crt"
-                    title="Path to your SSL certificate file (.crt, .pem)" style="flex:1;">
-                <button type="button" class="btn btn-secondary browse-file-btn" data-target="ssl-cert-input">Browse…</button>
+                    title="Path to your SSL certificate or fullchain file (.crt, .pem)" style="flex:1;">
+                <button type="button" class="btn btn-secondary browse-file-btn"
+                    data-target="ssl-cert-input">Browse…</button>
             </div>
-            <small class="muted">Full path to your SSL certificate file</small>
+            <small class="muted">Use your full chain file (e.g., fullchain.pem). Leaf-only .crt can fail.
+            </small>
         </label>
 
         <label style="grid-column: span 2;">SSL Private Key File
             <div style="display:flex; gap:8px; align-items:center;">
                 <input id="ssl-key-input" type="text" name="ssl_key_file" class="input" placeholder="private.key"
                     title="Path to your SSL private key file (.key)" style="flex:1;">
-                <button type="button" class="btn btn-secondary browse-file-btn" data-target="ssl-key-input">Browse…</button>
+                <button type="button" class="btn btn-secondary browse-file-btn"
+                    data-target="ssl-key-input">Browse…</button>
             </div>
-            <small class="muted">Full path to your SSL private key file</small>
+            <small class="muted">Full path to your SSL private key file (.key or .pem)</small>
         </label>
 
         <div class="row-actions">
@@ -46,6 +58,13 @@
         </div>
     </form>
     <div id="msg-server" class="muted"></div>
+
+    <div class="muted" id="server-links" style="margin-top:8px;">
+      <span>Quick open:</span>
+      <a id="link-local" class="link" href="#" target="_blank" rel="noopener">local</a>
+      <span>·</span>
+      <a id="link-domain" class="link" href="#" target="_blank" rel="noopener">domain</a>
+    </div>
 </section>
 
 <!-- Remote Access Section -->
