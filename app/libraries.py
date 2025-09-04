@@ -255,19 +255,38 @@ async def _bg_scan_library(library_id: str, job_id: str | None = None) -> None:
                 await db.commit()
 
         stats = {}
-        if lib.type == "movie":
-            stats = await scan_movie_library(db, lib, progress_cb=_progress)
-        elif lib.type == "tv":
-            stats = await scan_tv_library(db, lib, progress_cb=_progress)
-        await db.commit()
+        # Extract simple fields to satisfy current scanner signatures
+        lib_name = lib.name
+        lib_type = lib.type
+        lib_id = lib.id
+        try:
+            if lib.type == "movie":
+                stats = await scan_movie_library(db, lib, lib_name, lib_type, lib_id, progress_cb=_progress)
+            elif lib.type == "tv":
+                stats = await scan_tv_library(db, lib, lib_name, lib_type, lib_id, progress_cb=_progress)
+            await db.commit()
 
-        if job_id:
-            job = (await db.execute(select(BackgroundJob).where(BackgroundJob.id == job_id))).scalars().first()
-            if job:
-                job.status = "done"
-                job.message = "Scan complete"
-                job.result = stats
-                await db.commit()
+            if job_id:
+                job = (await db.execute(select(BackgroundJob).where(BackgroundJob.id == job_id))).scalars().first()
+                if job:
+                    job.status = "done"
+                    job.message = "Scan complete"
+                    job.result = stats
+                    await db.commit()
+        except Exception as e:
+            # Ensure background job is marked failed instead of leaving UI polling forever
+            try:
+                await db.rollback()
+            except Exception:
+                pass
+            if job_id:
+                job = (await db.execute(select(BackgroundJob).where(BackgroundJob.id == job_id))).scalars().first()
+                if job:
+                    job.status = "failed"
+                    job.message = f"Scan error: {e!s}"
+                    await db.commit()
+            # Re-raise so it surfaces in logs
+            raise
 
 async def _bg_refresh_metadata(library_id: str, force: bool, only_missing: bool, job_id: str | None = None) -> None:
     Session = get_sessionmaker()
@@ -409,6 +428,12 @@ async def scan_library(
     if not lib:
         raise HTTPException(status_code=404, detail="Library not found")
 
+    # Extract library attributes to avoid lazy loading issues later
+    library_name = lib.name
+    library_type = lib.type
+    library_path = lib.path
+    library_id = lib.id
+
     if background:
         # create job row and queue background task
         job = BackgroundJob(job_type="scan_library", library_id=library_id, status="queued", progress=0, total=None)
@@ -419,15 +444,15 @@ async def scan_library(
         return {"ok": True, "queued": True, "job_id": job.id}
 
     if lib.type == "movie":
-        stats = await scan_movie_library(db, lib)
+        stats = await scan_movie_library(db, lib, library_name, library_type, library_id)
         return {"ok": True, **stats}
 
     if lib.type == "tv":
-        stats = await scan_tv_library(db, lib)
+        stats = await scan_tv_library(db, lib, library_name, library_type, library_id)
         # 1) fix mis-titled shows (you already had this)
-        retitled = await _retitle_tv_shows(db, lib.id)
+        retitled = await _retitle_tv_shows(db, library_id)
         # 2) NEW: split files so each SxxEyy gets its own episode row
-        repaired = await _repair_tv_episodes(db, lib.id)
+        repaired = await _repair_tv_episodes(db, library_id)
         return {"ok": True, **stats, "tv_retitled": retitled, "tv_repaired": repaired}
 
     raise HTTPException(status_code=400, detail="Unsupported library type")

@@ -21,7 +21,7 @@
             const plyrRoot = video.closest('.plyr') || document;
             const label = plyrRoot.querySelector('.plyr__time--duration');
             if (label) label.textContent = fmtTime(totalSecs);
-        } catch {}
+        } catch { }
     };
     async function fetchMetaDuration(fileId) {
         try {
@@ -59,10 +59,83 @@
             wrap.classList.remove("collapsed");
             wrap.classList.add("expanded");
         }
+        // Start time updates when player opens
+        startTimeUpdate();
+    }
+
+    function updateCurrentTimeDisplay() {
+        // Find the PLYR controls container
+        const plyrRoot = document.querySelector('.plyr') || document;
+        let timeDisplay = plyrRoot.querySelector('.real-time-display');
+
+        if (!timeDisplay) {
+            // Create the time display element if it doesn't exist
+            timeDisplay = document.createElement('div');
+            timeDisplay.className = 'real-time-display';
+            timeDisplay.style.cssText = `
+                color: #fff;
+                font-family: monospace;
+                font-size: 14px;
+                font-weight: 500;
+                padding: 6px 10px;
+                background: rgba(0, 0, 0, 0.8);
+                border-radius: 6px;
+                position: absolute;
+                top: 15px;
+                right: 15px;
+                z-index: 1000;
+                pointer-events: none;
+                user-select: none;
+                box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
+            `;
+
+            // Insert it into the PLYR video wrapper, not the controls
+            const plyrContainer = plyrRoot.querySelector('.plyr__video-wrapper') || plyrRoot;
+            if (plyrContainer) {
+                plyrContainer.style.position = 'relative';
+                plyrContainer.appendChild(timeDisplay);
+            }
+        }
+
+        if (timeDisplay) {
+            const now = new Date();
+            const hours = now.getHours().toString().padStart(2, '0');
+            const minutes = now.getMinutes().toString().padStart(2, '0');
+            const seconds = now.getSeconds().toString().padStart(2, '0');
+
+            timeDisplay.textContent = `${hours}:${minutes}:${seconds}`;
+        }
+    }
+
+    function startTimeUpdate() {
+        const video = $("#plyr") || $("video");
+        if (video) {
+            // Update time display every 100ms for smooth updates
+            const timeInterval = setInterval(updateCurrentTimeDisplay, 100);
+
+            // Store the interval ID so we can clear it later
+            video._timeInterval = timeInterval;
+
+            // Also update on timeupdate event for more responsive updates
+            video.addEventListener('timeupdate', updateCurrentTimeDisplay);
+        }
+    }
+
+    function stopTimeUpdate() {
+        const video = $("#plyr") || $("video");
+        if (video && video._timeInterval) {
+            clearInterval(video._timeInterval);
+            video._timeInterval = null;
+            video.removeEventListener('timeupdate', updateCurrentTimeDisplay);
+        }
     }
     function closePlayerUI() {
         const wrap = $("#playerWrap");
         const video = $("#plyr") || $("video");
+
+        // Stop time updates
+        stopTimeUpdate();
+
         if (video) {
             try { if (video._hls) video._hls.destroy(); } catch { }
             video._hls = null;
@@ -103,7 +176,7 @@
                                 const mp4 = currentFileId ? `/stream/${encodeURIComponent(currentFileId)}/auto` : '';
                                 attachAndPlay({ video, m3u8, mp4 });
                             }
-                        } catch {}
+                        } catch { }
                     }
                 }
             });
@@ -248,9 +321,9 @@
                 triedDirect = true;
                 let fellBack = false;
                 const cleanup = () => {
-                    try { video.removeEventListener('error', onError); } catch {}
-                    try { video.removeEventListener('playing', onPlaying); } catch {}
-                    try { video.removeEventListener('canplay', onPlaying); } catch {}
+                    try { video.removeEventListener('error', onError); } catch { }
+                    try { video.removeEventListener('playing', onPlaying); } catch { }
+                    try { video.removeEventListener('canplay', onPlaying); } catch { }
                     if (fallbackTimer) clearTimeout(fallbackTimer);
                 };
                 const doFallback = () => {

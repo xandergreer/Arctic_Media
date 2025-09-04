@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from .models import Library, MediaItem, MediaKind
 from .utils import normalize_sort
+from .config import settings
 
 log = logging.getLogger("scanner")
 
@@ -117,6 +118,7 @@ def _pack_common(d: Dict[str, Any]) -> Dict[str, Any]:
         "tmdb_id": d.get("id"),
         "imdb_id": d.get("imdb_id"),
         "overview": (d.get("overview") or "").strip() or None,
+        "adult": bool(d.get("adult")) if d.get("adult") is not None else False,
         "genres": [g.get("name") for g in (d.get("genres") or []) if g.get("name")],
         "rating_vote_average": d.get("vote_average"),
         "rating_vote_count": d.get("vote_count"),
@@ -163,18 +165,34 @@ def _pack_cast(credits: Dict[str, Any], limit: int = 12) -> Dict[str, Any]:
 
 # ---- TMDB lookups ----
 
+def _filter_non_adult(results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    if getattr(settings, "METADATA_ALLOW_ADULT", False):
+        return results
+    out = []
+    for r in results or []:
+        if r is None:
+            continue
+        # TMDB marks adult titles with adult: true (for movies, and increasingly for TV)
+        if r.get("adult") is True:
+            continue
+        out.append(r)
+    return out
+
+
 async def _search_movie(api_key: str, title: str, year: Optional[int]) -> Optional[int]:
     q1 = title
     q2 = _clean_title_for_search(title)
     for q, y in ((q1, year), (q2, year), (q2, None)):
-        payload = await _get(api_key, "search/movie", {"query": q, "include_adult": True, **({"year": y} if y else {})})
+        payload = await _get(api_key, "search/movie", {"query": q, "include_adult": bool(getattr(settings, "METADATA_ALLOW_ADULT", False)), **({"year": y} if y else {})})
         if payload and payload.get("results"):
-            mid = _best_movie_match(payload["results"], q, y)
+            results = _filter_non_adult(payload.get("results") or [])
+            mid = _best_movie_match(results, q, y)
             if mid:
                 return mid
-    multi = await _get(api_key, "search/multi", {"query": q2 or q1, "include_adult": True})
+    multi = await _get(api_key, "search/multi", {"query": q2 or q1, "include_adult": bool(getattr(settings, "METADATA_ALLOW_ADULT", False))})
     if multi:
-        movies = [r for r in (multi.get("results") or []) if r.get("media_type") == "movie"]
+        movies_raw = [r for r in (multi.get("results") or []) if r.get("media_type") == "movie"]
+        movies = _filter_non_adult(movies_raw)
         mid = _best_movie_match(movies, q2 or q1, year)
         if mid:
             return mid
@@ -185,9 +203,11 @@ async def _search_tv(api_key: str, title: str) -> Optional[int]:
     q1 = title
     q2 = _clean_title_for_search(title)
     for q in (q1, q2):
-        payload = await _get(api_key, "search/tv", {"query": q, "include_adult": True})
+        payload = await _get(api_key, "search/tv", {"query": q, "include_adult": bool(getattr(settings, "METADATA_ALLOW_ADULT", False))})
         if payload and payload.get("results"):
-            return payload["results"][0]["id"]
+            results = _filter_non_adult(payload.get("results") or [])
+            if results:
+                return results[0].get("id")
     return None
 
 async def _movie_detail_pack(api_key: str, tmdb_id: int) -> Dict[str, Any]:

@@ -3,12 +3,140 @@
 
 <head>
     <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <meta name="viewport" content="width=device-width,                <button id=" search-btn" class="search-btn"
+        aria-label="Search">
+    </button>
     <title>{% block title %}Arctic Media{% endblock %}</title>
     <link rel="icon" href="/static/img/logo-mark-icecap-cutout.ico">
     <link rel="stylesheet" href="/static/css/base.css?v=9">
     <link rel="stylesheet" href="/static/css/components.css?v=9">
     <link rel="stylesheet" href="/static/css/pages.css?v=9">
+    <style>
+        .search-container {
+            position: absolute;
+            top: 100%;
+            left: 0;
+            background: var(--bg-elev, #141414);
+            border: 1px solid var(--border, #333);
+            border-radius: 8px;
+            padding: 12px;
+            z-index: 1000;
+            min-width: 400px;
+            max-width: 500px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+        }
+
+        .search-input-wrapper {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .search-input-wrapper input {
+            flex: 1;
+            padding: 8px 12px;
+            border: 1px solid var(--border, #333);
+            border-radius: 4px;
+            background: var(--bg, #1a1a1a);
+            color: var(--text, #eee);
+        }
+
+        .search-btn {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            width: 36px;
+            height: 36px;
+            border: 1px solid var(--border, #333);
+            border-radius: 6px;
+            background: var(--bg-elev, #141414);
+            color: var(--text, #eee);
+            cursor: pointer;
+            transition: all 0.2s ease;
+            position: relative;
+        }
+
+        .search-btn:hover {
+            background: var(--bg-card, #181818);
+            border-color: var(--primary, #007bff);
+            color: var(--primary, #007bff);
+        }
+
+        .search-btn:active {
+            transform: scale(0.95);
+        }
+
+        .search-btn svg {
+            display: block;
+            transition: transform 0.2s ease;
+        }
+
+        .search-btn:hover svg {
+            transform: scale(1.1);
+        }
+
+        .search-results-popup {
+            margin-top: 8px;
+        }
+
+        .search-placeholder p {
+            margin: 0;
+            color: var(--text-muted, #aaa);
+        }
+
+        .search-section {
+            margin-bottom: 12px;
+        }
+
+        .search-section h4 {
+            margin: 0 0 8px 0;
+            font-size: 14px;
+            color: var(--text, #eee);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .search-result-item {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 8px 12px;
+            color: var(--text, #eee);
+            text-decoration: none;
+            border-radius: 4px;
+            transition: background-color 0.2s;
+        }
+
+        .search-result-item:hover {
+            background: var(--bg-card, #181818);
+        }
+
+        .search-result-poster {
+            width: 40px;
+            height: 60px;
+            object-fit: cover;
+            border-radius: 4px;
+            flex-shrink: 0;
+        }
+
+        .search-result-content {
+            flex: 1;
+            min-width: 0;
+        }
+
+        .search-result-title {
+            font-weight: 500;
+            margin-bottom: 2px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .search-result-meta {
+            font-size: 12px;
+            color: var(--text-muted, #aaa);
+        }
+    </style>
     {% block extra_head %}{% endblock %}
 </head>
 
@@ -27,7 +155,32 @@
             </a>
 
             {% if not hide_nav %}
-            <nav class="cluster">
+            <nav class="cluster" style="position: relative;">
+                <button id="search-btn" class="search-btn" aria-label="Search" style="position: relative;">
+                    <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true">
+                        <path fill="currentColor"
+                            d="M15.5 14h-.79l-.28-.27C15.41 12.59 16 11.11 16 9.5 16 5.91 13.09 3 9.5 3S3 5.91 3 9.5 5.91 16 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z" />
+                    </svg>
+                </button>
+                <div class="search-container" style="display: none;">
+                    <div class="search-input-wrapper">
+                        <input type="text" id="search-input" placeholder="Search movies and TV shows..."
+                            autocomplete="off">
+                        <button id="search-clear" class="search-btn search-clear" type="button"
+                            aria-label="Clear search" title="Clear">
+                            <svg width="14" height="14" viewBox="0 0 24 24" aria-hidden="true"
+                                xmlns="http://www.w3.org/2000/svg">
+                                <path fill="#ffffff"
+                                    d="M18.3 5.7L12 12l6.3 6.3-1.4 1.4L10.6 13.4 4.3 19.7 2.9 18.3 9.2 12 2.9 5.7 4.3 4.3 10.6 10.6 16.9 4.3z" />
+                            </svg>
+                        </button>
+                    </div>
+                    <div id="search-results" class="search-results-popup">
+                        <div class="search-placeholder">
+                            <p>Start typing to search movies and TV shows</p>
+                        </div>
+                    </div>
+                </div>
                 <a href="/home" class="{{ 'active' if request.url.path == '/home' else '' }}">Home</a>
                 <a href="/movies" class="{{ 'active' if request.url.path.startswith('/movies') else '' }}">Movies</a>
                 <a href="/tv"
@@ -71,7 +224,150 @@
 
     <!-- main app JS -->
     <script src="/static/js/main.js" nonce="{{ request.state.csp_nonce }}"></script>
-    {% block scripts %}{% endblock %}
+    {% block scripts %}
+    <script nonce="{{ request.state.csp_nonce }}">
+        document.getElementById('search-btn').addEventListener('click', function () {
+            const container = document.querySelector('.search-container');
+            container.style.display = container.style.display === 'none' ? 'block' : 'none';
+        });
+
+        // Search functionality
+        const searchInput = document.getElementById('search-input');
+        const searchResults = document.getElementById('search-results');
+        const searchClear = document.getElementById('search-clear');
+        const searchContainer = document.querySelector('.search-container');
+
+        let searchTimeout;
+        let currentSearchQuery = '';
+        let isSearching = false;
+        let searchCache = new Map(); // Cache for search results
+
+        searchInput.addEventListener('input', function () {
+            const query = this.value.trim();
+            clearTimeout(searchTimeout);
+
+            if (query.length < 2) {
+                searchResults.innerHTML = '<div class="search-placeholder"><p>Start typing to search movies and TV shows</p></div>';
+                currentSearchQuery = '';
+                return;
+            }
+
+            // Check cache first
+            if (searchCache.has(query)) {
+                displayResults(searchCache.get(query));
+                return;
+            }
+
+            // Don't search if the query hasn't changed significantly
+            if (query === currentSearchQuery) {
+                return;
+            }
+
+            searchTimeout = setTimeout(() => performSearch(query), 300);
+        });
+
+        searchInput.addEventListener('keydown', function (e) {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                const query = this.value.trim();
+                if (query.length >= 2) {
+                    performSearch(query);
+                }
+            } else if (e.key === 'Escape') {
+                searchContainer.style.display = 'none';
+            }
+        });
+
+        searchClear.addEventListener('click', function () {
+            searchInput.value = '';
+            searchResults.innerHTML = '<div class="search-placeholder"><p>Start typing to search movies and TV shows</p></div>';
+            searchInput.focus();
+        });
+
+        // Close search on outside click
+        document.addEventListener('click', function (e) {
+            if (!searchContainer.contains(e.target) && e.target !== document.getElementById('search-btn')) {
+                searchContainer.style.display = 'none';
+            }
+        });
+
+        async function performSearch(query) {
+            if (isSearching) return; // Prevent concurrent searches
+
+            isSearching = true;
+            currentSearchQuery = query;
+
+            // Show loading state
+            searchResults.innerHTML = '<div class="search-placeholder"><p>Searching...</p></div>';
+
+            try {
+                const response = await fetch(`/api/search?q=${encodeURIComponent(query)}`);
+                if (!response.ok) throw new Error('Search failed');
+
+                const data = await response.json();
+
+                // Cache the results
+                searchCache.set(query, data);
+
+                // Limit cache size to prevent memory issues
+                if (searchCache.size > 50) {
+                    const firstKey = searchCache.keys().next().value;
+                    searchCache.delete(firstKey);
+                }
+
+                displayResults(data);
+            } catch (error) {
+                console.error('Search error:', error);
+                searchResults.innerHTML = '<div class="search-placeholder"><p>Search failed. Please try again.</p></div>';
+            } finally {
+                isSearching = false;
+            }
+        }
+
+        function displayResults(data) {
+            if (data.total === 0) {
+                searchResults.innerHTML = '<div class="search-placeholder"><p>No results found</p></div>';
+                return;
+            }
+
+            let html = '';
+
+            if (data.movies.length > 0) {
+                html += '<div class="search-section"><h4>Movies</h4>';
+                data.movies.forEach(movie => {
+                    const posterUrl = movie.poster_url || '/static/img/no-poster.png';
+                    html += `
+                        <a href="/movie/${movie.id}" class="search-result-item">
+                            <img src="${posterUrl}" alt="${movie.title}" class="search-result-poster" loading="lazy">
+                            <div class="search-result-content">
+                                <div class="search-result-title">${movie.title}</div>
+                                <div class="search-result-meta">${movie.year || ''}</div>
+                            </div>
+                        </a>
+                    `;
+                });
+                html += '</div>';
+            }
+
+            if (data.tv_shows.length > 0) {
+                html += '<div class="search-section"><h4>TV Shows</h4>';
+                data.tv_shows.forEach(show => {
+                    const posterUrl = show.poster_url || '/static/img/no-poster.png';
+                    html += `
+                        <a href="/show/${show.id}" class="search-result-item">
+                            <img src="${posterUrl}" alt="${show.title}" class="search-result-poster" loading="lazy">
+                            <div class="search-result-content">
+                                <div class="search-result-title">${show.title}</div>
+                                <div class="search-result-meta">${show.year || ''}</div>
+                            </div>
+                        </a>
+                    `;
+                });
+                html += '</div>';
+            } searchResults.innerHTML = html;
+        }
+    </script>
+    {% endblock %}
 </body>
 
 </html>

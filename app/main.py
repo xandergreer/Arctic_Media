@@ -25,7 +25,9 @@ if sys.platform.startswith("win"):
 
 # ── Stdlib / FastAPI / SQLA ───────────────────────────────────────────────────
 import os, time, secrets, re, ipaddress
-from fastapi import FastAPI, Request, Depends, HTTPException
+from typing import Optional
+from fastapi import FastAPI, Request, Depends, HTTPException, Query
+from pydantic import BaseModel
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -39,7 +41,7 @@ from sqlalchemy import select, func
 from .config import settings
 from .database import init_db, get_db
 from .auth import router as auth_router, get_current_user, ACCESS_COOKIE, require_admin
-from .utils import decode_token
+from .utils import decode_token, normalize_sort
 from .libraries import router as libraries_router
 # from .browse import router as browse_router  # (left disabled to avoid path clashes)
 from .fsbrowse import router as fs_router
@@ -58,6 +60,7 @@ from .streaming_hls import (
     stop_hls_cleanup_task,
 )
 from .models import Library, MediaItem, MediaKind, User, MediaFile
+from .metadata import _movie_detail_pack, _search_movie, _tv_detail_pack, _search_tv, _episode_detail_pack
 from .scheduler import start_scheduler
 
 # ── App setup ─────────────────────────────────────────────────────────────────
@@ -198,6 +201,36 @@ app.add_middleware(PerfLoggerMiddleware)
 
 logging.getLogger("scanner").info("TMDB key present: %s", bool(settings.TMDB_API_KEY))
 
+# Redirect unauthenticated users to /login for HTML page requests
+@app.middleware("http")
+async def require_login_for_pages(request: Request, call_next):
+    try:
+        path = request.url.path or "/"
+        # Skip auth, static and service endpoints
+        if (
+            path.startswith("/static/")
+            or path.startswith("/auth/")
+            or path in {"/login", "/register", "/favicon.ico"}
+            or path.startswith("/docs")
+            or path.startswith("/redoc")
+            or path == "/openapi.json"
+            or path.startswith("/stream")
+            or path.startswith("/hls")
+        ):
+            return await call_next(request)
+
+        if request.method in {"GET", "HEAD"}:
+            accept = (request.headers.get("accept") or "").lower()
+            # Only affect page navigations
+            if "text/html" in accept:
+                token = request.cookies.get(ACCESS_COOKIE)
+                payload = decode_token(token) if token else None
+                if not payload or payload.get("typ") != "access":
+                    return RedirectResponse("/login", status_code=307)
+    except Exception:
+        pass
+    return await call_next(request)
+
 # ── Lifecycle ────────────────────────────────────────────────────────────────
 @app.on_event("startup")
 async def startup_event():
@@ -286,10 +319,10 @@ async def home(request: Request, db: AsyncSession = Depends(get_db), user = Depe
         select(func.count()).select_from(MediaItem).where(MediaItem.kind == MediaKind.show)
     )).scalar_one()
     recent_movies = (await db.execute(
-        select(MediaItem).where(MediaItem.kind == MediaKind.movie).order_by(MediaItem.created_at.desc()).limit(30)
+        select(MediaItem).where(MediaItem.kind == MediaKind.movie).order_by(MediaItem.updated_at.desc()).limit(30)
     )).scalars().all()
     recent_tv = (await db.execute(
-        select(MediaItem).where(MediaItem.kind == MediaKind.show).order_by(MediaItem.created_at.desc()).limit(30)
+        select(MediaItem).where(MediaItem.kind == MediaKind.show).order_by(MediaItem.updated_at.desc()).limit(30)
     )).scalars().all()
     libs = (await db.execute(
         select(Library).where(Library.owner_user_id == user.id).order_by(Library.created_at.desc())
@@ -388,7 +421,7 @@ async def movies_index(
     items = (await db.execute(
         select(MediaItem)
         .where(MediaItem.kind == MediaKind.movie)
-        .order_by(MediaItem.created_at.desc())
+        .order_by(MediaItem.updated_at.desc())
         .limit(page_size)
         .offset((page - 1) * page_size)
     )).scalars().all()
@@ -416,7 +449,7 @@ async def movie_detail(item_id: str, request: Request, db: AsyncSession = Depend
         select(MediaFile).where(MediaFile.media_item_id == movie.id).order_by(MediaFile.created_at.asc())
     )).scalars().all()
 
-    return templates.TemplateResponse("movie_detail.html", {"request": request, "item": movie, "files": files})
+    return templates.TemplateResponse("movie_detail.html", {"request": request, "item": movie, "files": files, "user": user})
 
 # ── TV ────────────────────────────────────────────────────────────────────────
 @app.get("/tv", response_class=HTMLResponse)
@@ -435,7 +468,7 @@ async def tv_grid(
     shows = (await db.execute(
         select(MediaItem)
         .where(MediaItem.kind == MediaKind.show)
-        .order_by(MediaItem.sort_title.asc())
+        .order_by(MediaItem.updated_at.asc())
         .limit(page_size)
         .offset((page - 1) * page_size)
     )).scalars().all()
@@ -481,7 +514,7 @@ async def show_detail_page(show_id: str, request: Request, db: AsyncSession = De
 
     return templates.TemplateResponse(
         "show_detail.html",
-        {"request": request, "item": show, "seasons": seasons, "episodes": [], "first_play_file_id": first_play_file_id}
+        {"request": request, "item": show, "seasons": seasons, "episodes": [], "first_play_file_id": first_play_file_id, "user": user}
     )
 
 @app.get("/show/{show_id}/season/{season_num}", response_class=HTMLResponse)
@@ -510,6 +543,115 @@ async def season_detail_page(show_id: str, season_num: int, request: Request, db
         season = seasons[season_num - 1]
     if not season:
         return RedirectResponse(f"/show/{show.id}", status_code=307)
+
+# ---- Admin: Update metadata (movie/show/episode)
+class UpdateMovieIn(BaseModel):
+    title: Optional[str] = None
+    poster_url: Optional[str] = None
+    backdrop_url: Optional[str] = None
+    tmdb_id: Optional[int] = None
+    refresh_from_tmdb: Optional[bool] = False
+
+@app.patch("/admin/media/{item_id}")
+async def admin_update_movie(
+    item_id: str,
+    body: UpdateMovieIn,
+    db: AsyncSession = Depends(get_db),
+    admin = Depends(require_admin),
+):
+    item = await db.get(MediaItem, item_id)
+    if not item:
+        raise HTTPException(status_code=404, detail="Item not found")
+
+    changed = False
+    if body.title is not None and body.title.strip() and body.title.strip() != item.title:
+        item.title = body.title.strip()
+        item.sort_title = normalize_sort(item.title)
+        changed = True
+    if body.poster_url is not None:
+        item.poster_url = body.poster_url.strip() or None
+        changed = True
+    if body.backdrop_url is not None:
+        item.backdrop_url = body.backdrop_url.strip() or None
+        changed = True
+
+    if body.tmdb_id is not None or body.refresh_from_tmdb:
+        api_key = getattr(settings, "TMDB_API_KEY", "")
+        if not api_key:
+            raise HTTPException(status_code=400, detail="TMDB_API_KEY not configured")
+        if item.kind == MediaKind.movie:
+            tmdb_id = body.tmdb_id or await _search_movie(api_key, item.title, item.year)
+            if not tmdb_id:
+                raise HTTPException(status_code=404, detail="TMDB movie not found")
+            data = await _movie_detail_pack(api_key, int(tmdb_id))
+            if data:
+                ej = dict(item.extra_json or {})
+                ej.update(data)
+                item.extra_json = ej
+                ttl = body.title if body.title is not None else data.get("title")
+                if ttl and ttl.strip():
+                    item.title = ttl.strip()
+                    item.sort_title = normalize_sort(item.title)
+                if not body.poster_url and data.get("poster"):
+                    item.poster_url = data.get("poster")
+                if not body.backdrop_url and data.get("backdrop"):
+                    item.backdrop_url = data.get("backdrop")
+                rd = (data.get("release_date") or "")
+                if rd[:4].isdigit():
+                    try:
+                        item.year = int(rd[:4])
+                    except Exception:
+                        pass
+                changed = True
+        elif item.kind == MediaKind.show:
+            tmdb_id = body.tmdb_id or await _search_tv(api_key, item.title)
+            if not tmdb_id:
+                raise HTTPException(status_code=404, detail="TMDB show not found")
+            data = await _tv_detail_pack(api_key, int(tmdb_id))
+            if data:
+                ej = dict(item.extra_json or {})
+                ej.update(data)
+                item.extra_json = ej
+                ttl = body.title if body.title is not None else data.get("name")
+                if ttl and ttl.strip():
+                    item.title = ttl.strip()
+                    item.sort_title = normalize_sort(item.title)
+                if not body.poster_url and data.get("poster"):
+                    item.poster_url = data.get("poster")
+                if not body.backdrop_url and data.get("backdrop"):
+                    item.backdrop_url = data.get("backdrop")
+                fad = (data.get("first_air_date") or "")
+                if fad[:4].isdigit():
+                    try:
+                        item.year = int(fad[:4])
+                    except Exception:
+                        pass
+                changed = True
+        elif item.kind == MediaKind.episode:
+            # Use parent season/show metadata to refresh episode details
+            season = await db.get(MediaItem, item.parent_id) if item.parent_id else None
+            show = await db.get(MediaItem, season.parent_id) if season and season.parent_id else None
+            show_tmdb = (show.extra_json or {}).get("tmdb_id") if show and show.extra_json else None
+            se = dict(item.extra_json or {})
+            season_no = se.get("season") or se.get("season_number")
+            episode_no = se.get("episode") or se.get("episode_number")
+            if show_tmdb and season_no and episode_no:
+                data = await _episode_detail_pack(api_key, int(show_tmdb), int(season_no), int(episode_no))
+                if data:
+                    se.update(data)
+                    item.extra_json = se
+                    if not body.poster_url and data.get("still"):
+                        item.poster_url = data.get("still")
+                    ttl = body.title if body.title is not None else data.get("title")
+                    if ttl and ttl.strip():
+                        item.title = ttl.strip()
+                        item.sort_title = normalize_sort(item.title)
+                    changed = True
+
+    if changed:
+        await db.commit()
+        await db.refresh(item)
+    return {"ok": True, "id": item.id}
 
     # 1) episodes attached to the season (ideal case)
     eps = (await db.execute(
@@ -559,7 +701,7 @@ async def season_detail_page(show_id: str, season_num: int, request: Request, db
 
     return templates.TemplateResponse(
         "show_detail.html",
-        {"request": request, "item": show, "seasons": seasons, "episodes": episodes, "first_play_file_id": None},
+        {"request": request, "item": show, "seasons": seasons, "episodes": episodes, "first_play_file_id": None, "user": user},
     )
 
 # ── Health check endpoint ─────────────────────────────────────────────────────
@@ -602,7 +744,7 @@ async def api_movies(
     rows = (await db.execute(
         select(MediaItem)
         .where(MediaItem.kind == MediaKind.movie)
-        .order_by(MediaItem.created_at.desc())
+        .order_by(MediaItem.updated_at.desc())
         .limit(page_size)
         .offset((page - 1) * page_size)
     )).scalars().all()
@@ -661,4 +803,79 @@ async def api_tv(
         "total_pages": total_pages,
         "count": total_count,
         "items": items,
+    }
+
+@app.get("/api/search")
+async def api_search(
+    q: str = Query(..., description="Search query"),
+    db: AsyncSession = Depends(get_db),
+    user = Depends(get_current_user),
+    limit: int = Query(20, ge=1, le=100, description="Maximum number of results"),
+):
+    """Search movies and TV shows"""
+    if not q or len(q.strip()) < 2:
+        return {"movies": [], "tv_shows": [], "total": 0}
+
+    query_str = q.strip()
+
+    # Try prefix search first (more efficient), then fallback to contains search
+    search_terms = [
+        f"{query_str.lower()}%",  # Prefix search (most efficient)
+        f"%{query_str.lower()}%",  # Contains search (fallback)
+    ]
+
+    all_items = []
+
+    for search_term in search_terms:
+        if len(all_items) >= limit * 2:  # Got enough results
+            break
+
+        remaining_limit = (limit * 2) - len(all_items)
+
+        query = (
+            select(MediaItem)
+            .where(
+                MediaItem.kind.in_([MediaKind.movie, MediaKind.show]),
+                func.lower(MediaItem.title).like(search_term)
+            )
+            .order_by(MediaItem.title)
+            .limit(remaining_limit)
+        )
+
+        result = await db.execute(query)
+        items = result.scalars().all()
+
+        # Avoid duplicates
+        existing_ids = {item.id for item in all_items}
+        new_items = [item for item in items if item.id not in existing_ids]
+        all_items.extend(new_items)
+
+    # Separate results by type
+    movies = [item for item in all_items if item.kind == MediaKind.movie][:limit]
+    tv_shows = [item for item in all_items if item.kind == MediaKind.show][:limit]
+
+    return {
+        "movies": [
+            {
+                "id": movie.id,
+                "title": movie.title,
+                "year": movie.year,
+                "poster_url": movie.poster_url,
+                "overview": movie.overview,
+                "type": "movie"
+            }
+            for movie in movies
+        ],
+        "tv_shows": [
+            {
+                "id": show.id,
+                "title": show.title,
+                "year": show.year,
+                "poster_url": show.poster_url,
+                "overview": show.overview,
+                "type": "tv"
+            }
+            for show in tv_shows
+        ],
+        "total": len(movies) + len(tv_shows)
     }

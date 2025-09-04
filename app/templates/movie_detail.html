@@ -21,6 +21,11 @@
                 <button id="playBtn" class="btn primary" data-file-id="{{ files[0].id }}" data-item-id="{{ item.id }}"
                     data-title="{{ item.title|e }}">▶ Play</button>
                 {% endif %}
+                {% if user and user.is_admin %}
+                <button id="editMetaBtn" class="btn" title="Edit metadata" style="display:inline-flex;align-items:center;gap:6px;">
+                    <span aria-hidden="true">✎</span> Edit
+                </button>
+                {% endif %}
                 <a class="btn" href="/movies">Back to Movies</a>
             </div>
         </div>
@@ -138,6 +143,12 @@
         display: none
     }
 
+    .player-bar .right {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+    }
+
     .select {
         background: #18181d;
         color: #fff;
@@ -156,4 +167,75 @@
         color: #fff
     }
 </style>
+
+{% if user and user.is_admin %}
+<div id="metaModal" class="modal hidden">
+  <div class="modal-card" style="max-width:720px;width:100%">
+    <header class="modal-header" style="display:flex;justify-content:space-between;align-items:center;">
+      <h3>Edit Metadata</h3>
+      <button id="metaClose" class="btn btn-ghost">Close</button>
+    </header>
+    <div class="modal-body" style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+      <label>Title
+        <input id="m-title" class="input" type="text" value="{{ item.title|e }}">
+      </label>
+      <label>TMDB ID
+        <input id="m-tmdb" class="input" type="number" value="{{ (ej.get('tmdb_id') if ej else '') }}" placeholder="e.g. 603">
+      </label>
+      <label style="grid-column:1/-1;">Poster URL
+        <input id="m-poster" class="input" type="text" value="{{ poster }}">
+      </label>
+      <label style="grid-column:1/-1;">Backdrop URL
+        <input id="m-backdrop" class="input" type="text" value="{{ backdrop }}">
+      </label>
+      <label style="grid-column:1/-1;display:flex;align-items:center;gap:8px;">
+        <input id="m-refresh" type="checkbox"> <span>Refresh from TMDB (uses TMDB ID if provided, otherwise searches by title)</span>
+      </label>
+    </div>
+    <footer class="modal-footer" style="display:flex;justify-content:flex-end;gap:8px;margin-top:10px;">
+      <button id="metaSave" class="btn btn-primary">Save</button>
+    </footer>
+  </div>
+  <div id="metaBackdrop" class="modal-backdrop"></div>
+  <style>
+    .modal.hidden{display:none}
+    .modal{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;z-index:100}
+    /* Ensure the dialog stays above the backdrop so clicks in inputs don't close it */
+    .modal-card{position:relative;z-index:2;background:#151515;border:1px solid #333;border-radius:10px;padding:14px}
+    .modal-backdrop{position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:1}
+  </style>
+
+  <script nonce="{{ request.state.csp_nonce }}">
+    (function(){
+      const $ = (s)=>document.querySelector(s);
+      const modal = $('#metaModal');
+      const open = ()=> modal.classList.remove('hidden');
+      const close = ()=> modal.classList.add('hidden');
+      $('#editMetaBtn')?.addEventListener('click', open);
+      $('#metaClose')?.addEventListener('click', close);
+      $('#metaBackdrop')?.addEventListener('click', close);
+      $('#metaSave')?.addEventListener('click', async ()=>{
+        const body = {
+          title: ($('#m-title')?.value||'').trim() || null,
+          tmdb_id: (parseInt($('#m-tmdb')?.value)||null),
+          poster_url: ($('#m-poster')?.value||'').trim(),
+          backdrop_url: ($('#m-backdrop')?.value||'').trim(),
+          refresh_from_tmdb: !!$('#m-refresh')?.checked,
+        };
+        if (!body.poster_url) body.poster_url = null;
+        if (!body.backdrop_url) body.backdrop_url = null;
+        try{
+          const r = await fetch(`/admin/media/{{ item.id }}`, {method:'PATCH', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
+          if(!r.ok){
+            const txt = await r.text();
+            alert('Save failed: '+txt);
+            return;
+          }
+          location.reload();
+        }catch(e){ alert('Save failed: '+e.message); }
+      });
+    })();
+  </script>
+</div>
+{% endif %}
 {% endblock %}

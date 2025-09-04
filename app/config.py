@@ -33,7 +33,9 @@ class Settings(BaseSettings):
 
     # Server configuration
     HOST: str = Field(default="0.0.0.0", description="Server host binding")
-    PORT: int = Field(default=8000, description="Server port")
+    PORT: int = Field(default=8085, description="Server port")
+    # Port used only on first-ever startup when no server settings exist
+    FIRST_RUN_PORT: int = Field(default=8085, description="First-run default port (if no settings in DB)")
     
     # SSL Configuration
     SSL_ENABLED: bool = Field(default=False, description="Enable SSL/HTTPS")
@@ -50,6 +52,9 @@ class Settings(BaseSettings):
     # media toolchain
     FFMPEG_PATH: str = "ffmpeg"
     FFPROBE_PATH: str = "ffprobe"
+
+    # metadata/enrichment
+    METADATA_ALLOW_ADULT: bool = Field(default=False, description="Allow adult/NSFW results from TMDB searches")
 
     # tmdb
     TMDB_API_KEY: str = ""

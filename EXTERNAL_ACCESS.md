@@ -1,7 +1,40 @@
 # External Access Guide for Arctic Media
 
 ## Overview
-This guide covers how to access Arctic Media from outside your local network.
+This guide covers external access using either the app’s built‑in HTTPS or a reverse proxy/tunnel.
+
+## Method 0: Built‑in HTTPS (no proxy)
+
+Arctic Media can serve HTTPS directly. Provide your certificate and key, enable SSL, and (optionally) bind to port 443.
+
+1) Provide certificate files
+- fullchain/certificate: e.g., `C:\certs\fullchain.pem` or `C:\certs\certificate.crt`
+- private key: e.g., `C:\certs\privkey.pem` or `C:\certs\private.key`
+
+2) Configure `.env`
+```
+SSL_ENABLED=true
+SSL_CERT_FILE=C:\certs\fullchain.pem
+SSL_KEY_FILE=C:\certs\privkey.pem
+# Optional: serve on 443 (requires port forward + firewall rule)
+PORT=443
+HOST=0.0.0.0
+```
+
+3) Open firewall (Windows example)
+```
+netsh advfirewall firewall add rule name="Arctic Media HTTPS" dir=in action=allow protocol=TCP localport=443
+```
+
+4) Router port forward
+- External 443 → Internal 443 on your server’s LAN IP (or forward to 8085 if you prefer keeping the app on 8085).
+
+5) DNS
+- Point your domain’s A/AAAA record at your public IP. Then access `https://your-domain/`.
+
+Notes
+- If you already saved server settings in the app, SSL fields missing in the DB are read from `.env` automatically.
+- If port 443 is in use or blocked by ISP, use another port (e.g., 8443) and browse `https://your-domain:8443/`.
 
 ## Method 1: Port Forwarding (Recommended for Home Use)
 

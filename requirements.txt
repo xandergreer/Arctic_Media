@@ -19,3 +19,6 @@ requests==2.32.3
 itsdangerous==2.2.0
 httpx[http2]==0.27.0
 hypercorn[h2]==0.16.0
+
+# Build tools
+pyinstaller==6.15.0
