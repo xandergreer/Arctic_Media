@@ -384,3 +384,260 @@ async def enrich_library(
         await progress_cb(total, total)
     log.info("enrich done: matched=%d skipped=%d episodes=%d", matched, skipped, ep_filled)
     return {"matched": matched, "skipped": skipped, "episodes": ep_filled}
+
+# Synchronous version for background threads
+def _get_sync(api_key: str, path: str, params: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """Synchronous HTTP GET helper using requests."""
+    import requests
+    import time
+    
+    time.sleep(0.11)  # Rate limiting
+    try:
+        r = requests.get(
+            f"{TMDB_API}/{path}",
+            headers=_headers(api_key),
+            params={**_params(api_key), **params},
+            timeout=15.0
+        )
+        if r.status_code == 429:
+            # gentle backoff then one retry
+            time.sleep(0.6)
+            r = requests.get(
+                f"{TMDB_API}/{path}",
+                headers=_headers(api_key),
+                params={**_params(api_key), **params},
+                timeout=15.0
+            )
+        r.raise_for_status()
+        return r.json()
+    except Exception as e:
+        log.warning("TMDB GET %s failed: %s", path, e)
+        return None
+
+def _search_movie_sync(api_key: str, title: str, year: Optional[int]) -> Optional[int]:
+    q1 = title
+    q2 = _clean_title_for_search(title)
+    for q, y in ((q1, year), (q2, year), (q2, None)):
+        payload = _get_sync(api_key, "search/movie", {"query": q, "include_adult": bool(getattr(settings, "METADATA_ALLOW_ADULT", False)), **({"year": y} if y else {})})
+        if payload and payload.get("results"):
+            results = _filter_non_adult(payload.get("results") or [])
+            mid = _best_movie_match(results, q, y)
+            if mid:
+                return mid
+    multi = _get_sync(api_key, "search/multi", {"query": q2 or q1, "include_adult": bool(getattr(settings, "METADATA_ALLOW_ADULT", False))})
+    if multi:
+        movies_raw = [r for r in (multi.get("results") or []) if r.get("media_type") == "movie"]
+        movies = _filter_non_adult(movies_raw)
+        mid = _best_movie_match(movies, q2 or q1, year)
+        if mid:
+            return mid
+    log.info("TMDB miss for title='%s' year=%s (q2='%s')", title, year, q2)
+    return None
+
+def _search_tv_sync(api_key: str, title: str) -> Optional[int]:
+    q1 = title
+    q2 = _clean_title_for_search(title)
+    for q in (q1, q2):
+        payload = _get_sync(api_key, "search/tv", {"query": q, "include_adult": bool(getattr(settings, "METADATA_ALLOW_ADULT", False))})
+        if payload and payload.get("results"):
+            results = _filter_non_adult(payload.get("results") or [])
+            if results:
+                return results[0].get("id")
+    return None
+
+def _movie_detail_pack_sync(api_key: str, tmdb_id: int) -> Dict[str, Any]:
+    d = _get_sync(api_key, f"movie/{tmdb_id}", {"append_to_response": "credits,releases"})
+    if not d:
+        return {}
+    out = _pack_common(d)
+    out.update({
+        "media_type": "movie",
+        "title": d.get("title") or d.get("original_title"),
+        "original_title": d.get("original_title"),
+        "release_date": d.get("release_date"),
+        "runtime": d.get("runtime"),
+    })
+    out.update(_pack_cast(d.get("credits") or {}))
+    return out
+
+def _tv_detail_pack_sync(api_key: str, tmdb_id: int) -> Dict[str, Any]:
+    d = _get_sync(api_key, f"tv/{tmdb_id}", {"append_to_response": "aggregate_credits"})
+    if not d:
+        return {}
+    out = _pack_common(d)
+    out.update({
+        "media_type": "tv",
+        "name": d.get("name") or d.get("original_name"),
+        "original_name": d.get("original_name"),
+        "first_air_date": d.get("first_air_date"),
+        "last_air_date": d.get("last_air_date"),
+        "in_production": d.get("in_production"),
+        "number_of_seasons": d.get("number_of_seasons"),
+        "number_of_episodes": d.get("number_of_episodes"),
+        "episode_run_time": d.get("episode_run_time"),
+    })
+    out.update(_pack_cast({"cast": (d.get("aggregate_credits") or {}).get("cast", [])}))
+    return out
+
+def _episode_detail_pack_sync(api_key: str, show_id: int, season: int, episode: int) -> Dict[str, Any]:
+    d = _get_sync(api_key, f"tv/{show_id}/season/{season}/episode/{episode}", {})
+    if not d:
+        return {}
+    return {
+        "media_type": "episode",
+        "name": d.get("name"),
+        "overview": (d.get("overview") or "").strip() or None,
+        "air_date": d.get("air_date"),
+        "still": _img(d.get("still_path"), "w300"),
+        "still_original": _img(d.get("still_path"), "original"),
+        "vote_average": d.get("vote_average"),
+        "vote_count": d.get("vote_count"),
+        "guest_stars": [
+            {"name": gs.get("name"), "character": gs.get("character"), "profile": _img(gs.get("profile_path"), "w185")}
+            for gs in (d.get("guest_stars") or [])[:10]
+        ],
+    }
+
+def enrich_library_sync(
+    session,
+    api_key: str,
+    library_id: str,
+    limit: int = 2000,
+    force: bool = False,
+    only_missing: bool = False,
+    progress_cb: Optional[Callable[[int, int], Awaitable[None]]] = None,
+) -> Dict[str, int]:
+    """
+    Synchronous version of enrich_library for background threads.
+    """
+    if not api_key:
+        log.info("TMDB_API_KEY not set; skipping enrichment")
+        return {"matched": 0, "skipped": 0, "episodes": 0}
+
+    from sqlalchemy import select
+    lib = session.execute(select(Library).where(Library.id == library_id)).scalars().first()
+    if not lib:
+        return {"matched": 0, "skipped": 0, "episodes": 0}
+
+    items = session.execute(
+        select(MediaItem).where(MediaItem.library_id == library_id).order_by(MediaItem.created_at.desc())
+    ).scalars().all()
+
+    matched = skipped = ep_filled = 0
+    tv_id_cache: Dict[str, int] = {}
+
+    items = items[:limit]
+    total = len(items)
+    processed = 0
+    for it in items:
+        data = dict(it.extra_json or {})
+        already = bool(data.get("tmdb_id"))
+
+        if it.kind == MediaKind.movie:
+            needs_poster = not (data.get("poster") or it.poster_url)
+            should_enrich = force or (not already) or (only_missing and needs_poster)
+
+            if should_enrich:
+                tmdb_id = _search_movie_sync(api_key, it.title, it.year)
+                if not tmdb_id:
+                    skipped += 1
+                    continue
+                data.update(_movie_detail_pack_sync(api_key, tmdb_id))
+                if data.get("title"):
+                    it.title = data["title"]
+                    it.sort_title = normalize_sort(it.title)
+                if data.get("release_date") and not it.year:
+                    y = (data["release_date"] or "")[:4]
+                    if y.isdigit():
+                        it.year = int(y)
+                it.extra_json = data
+                matched += 1
+
+            if data.get("poster") and not it.poster_url:
+                it.poster_url = data.get("poster")
+            if data.get("backdrop") and not it.backdrop_url:
+                it.backdrop_url = data.get("backdrop")
+
+        elif it.kind == MediaKind.show:
+            needs_poster = not (data.get("poster") or it.poster_url)
+            tmdb_id = data.get("tmdb_id") if already else None
+            if force or (not tmdb_id) or (only_missing and needs_poster):
+                tmdb_id = _search_tv_sync(api_key, it.title)
+                if not tmdb_id:
+                    skipped += 1
+                    continue
+                data.update(_tv_detail_pack_sync(api_key, tmdb_id))
+                it.extra_json = data
+                matched += 1
+            tv_id_cache[it.id] = tmdb_id or data.get("tmdb_id")
+            if data.get("poster") and not it.poster_url:
+                it.poster_url = data.get("poster")
+            if data.get("backdrop") and not it.backdrop_url:
+                it.backdrop_url = data.get("backdrop")
+
+        elif it.kind == MediaKind.season:
+            # nothing special; episodes will carry stills
+            it.extra_json = data
+
+        elif it.kind == MediaKind.episode:
+            se = dict(it.extra_json or {})
+            season_no = se.get("season")
+            episode_no = se.get("episode")
+            if not (season_no and episode_no):
+                skipped += 1
+                continue
+
+            if not tv_id_cache:
+                for show in items:
+                    if show.kind == MediaKind.show and (show.extra_json or {}).get("tmdb_id"):
+                        tv_id_cache[show.id] = show.extra_json["tmdb_id"]
+
+            show_tmdb_id = None
+            for show_id, s_tmdb in tv_id_cache.items():
+                show = next((x for x in items if x.id == show_id), None)
+                if show and show.title and it.title and normalize_sort(show.title) in normalize_sort(it.title):
+                    show_tmdb_id = s_tmdb
+                    break
+            if not show_tmdb_id:
+                show_tmdb_id = _search_tv_sync(api_key, it.title.split("S")[0].strip())
+            if not show_tmdb_id:
+                skipped += 1
+                continue
+
+            ep_data = _episode_detail_pack_sync(api_key, show_tmdb_id, int(season_no), int(episode_no))
+            if ep_data:
+                se.update(ep_data)
+                it.extra_json = se
+                ep_filled += 1
+
+        processed += 1
+        if progress_cb and processed % 25 == 0:
+            # Run progress callback synchronously
+            import asyncio
+            try:
+                loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    # If loop is running, we can't await, so skip progress
+                    pass
+                else:
+                    asyncio.run_until_complete(progress_cb(processed, total))
+            except:
+                pass
+        if (matched + ep_filled) % 50 == 0:
+            session.commit()
+
+    session.commit()
+    if progress_cb:
+        # Run final progress callback synchronously
+        import asyncio
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                # If loop is running, we can't await, so skip progress
+                pass
+            else:
+                asyncio.run_until_complete(progress_cb(total, total))
+        except:
+            pass
+    log.info("enrich done: matched=%d skipped=%d episodes=%d", matched, skipped, ep_filled)
+    return {"matched": matched, "skipped": skipped, "episodes": ep_filled}

@@ -238,6 +238,54 @@ async function bootPicker() {
 document.addEventListener('DOMContentLoaded', () => {
     const browseBtn = document.getElementById('browse-btn');
     if (browseBtn) browseBtn.addEventListener('click', bootPicker);
+    const scanAllBtn = document.getElementById('scan-all-btn');
+    if (scanAllBtn) {
+        scanAllBtn.addEventListener('click', async () => {
+            const prev = scanAllBtn.textContent;
+            scanAllBtn.disabled = true; scanAllBtn.textContent = 'Queued…'; scanAllBtn.setAttribute('aria-busy', 'true');
+            try {
+                const r = await fetch('/libraries/scan_all?background=true&refresh_metadata=true', { method: 'POST', credentials: 'same-origin' });
+                const jr = await r.json().catch(() => ({}));
+                if (r.ok && jr?.queued && jr?.job_id) {
+                    const jobId = jr.job_id;
+                    let stop = false;
+                    async function poll() {
+                        if (stop) return;
+                        try {
+                            const pj = await fetch(`/jobs/${jobId}`, { headers: { 'Accept': 'application/json' }, credentials: 'same-origin', cache: 'no-store' });
+                            if (pj.ok) {
+                                const j = await pj.json();
+                                if (j?.status === 'done') {
+                                    stop = true;
+                                    alert('All libraries scanned.');
+                                    scanAllBtn.removeAttribute('aria-busy'); scanAllBtn.disabled = false; scanAllBtn.textContent = prev || 'Scan All (scan + refresh)';
+                                    return;
+                                }
+                                if (j?.status === 'failed') {
+                                    stop = true;
+                                    alert('Scan-all failed');
+                                    scanAllBtn.removeAttribute('aria-busy'); scanAllBtn.disabled = false; scanAllBtn.textContent = prev || 'Scan All (scan + refresh)';
+                                    return;
+                                }
+                                const p = (j.total && j.total > 0) ? `${j.progress || 0}/${j.total}` : (j.status || '…');
+                                scanAllBtn.textContent = `Scanning… ${p}`;
+                            }
+                        } catch (_) { }
+                        setTimeout(poll, 1000);
+                    }
+                    poll();
+                } else if (r.ok) {
+                    alert('Scanning all libraries in foreground…');
+                    scanAllBtn.removeAttribute('aria-busy'); scanAllBtn.disabled = false; scanAllBtn.textContent = prev || 'Scan All (scan + refresh)';
+                } else {
+                    throw new Error('Scan-all request failed');
+                }
+            } catch (e) {
+                alert(e?.message || 'Scan-all failed');
+                scanAllBtn.removeAttribute('aria-busy'); scanAllBtn.disabled = false; scanAllBtn.textContent = prev || 'Scan All (scan + refresh)';
+            }
+        });
+    }
 });
 
 // --- Libraries CRUD wiring (submit, table reload, scan, delete) ---
@@ -268,6 +316,7 @@ document.addEventListener('DOMContentLoaded', () => {
           <td>${lib.path ?? ''}</td>
           <td style="text-align:center;white-space:nowrap">
             <button class="btn btn-secondary" data-act="scan" data-id="${lib.id}">Scan</button>
+            <button class="btn btn-primary" data-act="refresh" data-id="${lib.id}">Refresh Metadata</button>
             <button class="btn btn-ghost" data-act="del"  data-id="${lib.id}">Delete</button>
           </td>`;
                 tbody.appendChild(tr);
@@ -347,7 +396,7 @@ document.addEventListener('DOMContentLoaded', () => {
                                 btn.removeAttribute('aria-busy'); btn.disabled = false; btn.textContent = prev || 'Scan';
                                 return;
                             }
-                        } catch (_) {}
+                        } catch (_) { }
                         setTimeout(poll, 1000);
                     }
                     poll();
@@ -375,6 +424,61 @@ document.addEventListener('DOMContentLoaded', () => {
                 const r = await fetch(`/libraries/${id}`, { method: 'DELETE', credentials: 'same-origin' });
                 if (r.ok) reloadLibraries();
             } catch { }
+        }
+
+        if (act === 'refresh') {
+            const prev = btn.textContent;
+            btn.disabled = true; btn.textContent = 'Refreshing…'; btn.setAttribute('aria-busy', 'true');
+            try {
+                // queue background metadata refresh job and poll
+                const rq = await fetch(`/libraries/${id}/refresh_metadata?background=true&only_missing=true`, { method: 'POST', credentials: 'same-origin' });
+                const jr = await rq.json().catch(() => ({}));
+                if (rq.ok && jr?.queued && jr?.job_id) {
+                    const jobId = jr.job_id;
+                    let stop = false;
+                    async function poll() {
+                        if (stop) return;
+                        try {
+                            const r = await fetch(`/jobs/${jobId}`, { credentials: 'same-origin' });
+                            const j = await r.json();
+                            if (j?.status === 'done') {
+                                stop = true;
+                                const stats = j?.result?.stats || {};
+                                const { matched = 0, skipped = 0, episodes = 0 } = stats;
+                                alert(`Metadata refresh complete: ${matched} matched, ${episodes} episodes enriched, ${skipped} skipped`);
+                                reloadLibraries();
+                                btn.removeAttribute('aria-busy'); btn.disabled = false; btn.textContent = prev || 'Refresh Metadata';
+                                return;
+                            }
+                            if (j?.status === 'failed') {
+                                stop = true;
+                                alert('Metadata refresh failed');
+                                btn.removeAttribute('aria-busy'); btn.disabled = false; btn.textContent = prev || 'Refresh Metadata';
+                                return;
+                            }
+                            // Update progress if available
+                            if (j?.progress !== undefined && j?.total !== undefined) {
+                                btn.textContent = `Refreshing… ${j.progress}/${j.total}`;
+                            }
+                        } catch (_) { }
+                        setTimeout(poll, 1000);
+                    }
+                    poll();
+                } else {
+                    // fallback to synchronous refresh
+                    const r = await fetch(`/libraries/${id}/refresh_metadata?only_missing=true`, { method: 'POST', credentials: 'same-origin' });
+                    const data = await r.json().catch(() => ({}));
+                    if (!r.ok) throw new Error('Metadata refresh failed');
+                    const stats = data?.stats || {};
+                    const { matched = 0, skipped = 0, episodes = 0 } = stats;
+                    alert(`Metadata refresh complete: ${matched} matched, ${episodes} episodes enriched, ${skipped} skipped`);
+                    reloadLibraries();
+                    btn.removeAttribute('aria-busy'); btn.disabled = false; btn.textContent = prev || 'Refresh Metadata';
+                }
+            } catch (err) {
+                alert(err?.message || 'Metadata refresh failed');
+                btn.removeAttribute('aria-busy'); btn.disabled = false; btn.textContent = prev || 'Refresh Metadata';
+            }
         }
     });
 

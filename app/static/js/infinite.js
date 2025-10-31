@@ -13,7 +13,7 @@
   const placeholder = '/static/img/placeholder.png';
 
   function esc(s) {
-    return (s || '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    return (s || '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   }
 
   function pickPoster(item) {
@@ -28,9 +28,9 @@
     const href = kind === 'tv' ? `/show/${item.id}` : `/movie/${item.id}`;
     const year = item.year ? `<div class="sub">${String(item.year)}</div>` : '';
     return `<a class="card" href="${href}" title="${esc(item.title || '')}">`
-        + `<img loading="lazy" src="${poster}" alt="${esc(item.title || '')}">`
-        + `<div class="card-meta"><div class="title">${esc(item.title || '')}</div>${year}</div>`
-        + `</a>`;
+      + `<img loading="lazy" src="${poster}" alt="${esc(item.title || '')}">`
+      + `<div class="card-meta"><div class="title">${esc(item.title || '')}</div>${year}</div>`
+      + `</a>`;
   }
 
   async function loadMore() {
@@ -39,7 +39,11 @@
     loading = true;
     try {
       const nextPage = page + 1;
-      const url = `${endpoint}?page=${nextPage}&page_size=${pageSize}`;
+      const sep = endpoint.includes('?') ? '&' : '?';
+      // Get current sort parameter from URL
+      const urlParams = new URLSearchParams(window.location.search);
+      const sortParam = urlParams.get('sort') ? `&sort=${urlParams.get('sort')}` : '';
+      const url = `${endpoint}${sep}page=${nextPage}&page_size=${pageSize}${sortParam}`;
       const resp = await fetch(url, { headers: { 'Accept': 'application/json' }, cache: 'no-store' });
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
       const data = await resp.json();
@@ -52,7 +56,7 @@
       grid.dataset.page = String(page);
       grid.dataset.totalPages = String(totalPages);
     } catch (e) {
-      try { console.warn('[infinite] load failed', e); } catch {}
+      try { console.warn('[infinite] load failed', e); } catch { }
       page = totalPages; // stop further attempts
     } finally {
       loading = false;
@@ -64,4 +68,3 @@
   }, { rootMargin: '800px 0px' });
   io.observe(sentinel);
 })();
-

@@ -3,9 +3,19 @@
 
 {% block content %}
     <h1>Movies</h1>
-    <div class="muted">{{ count or (items|length) }} titles</div>
+    <div class="muted" style="display:flex;gap:12px;align-items:center;justify-content:space-between;flex-wrap:wrap">
+        <span>{{ count or (items|length) }} titles</span>
+        <label style="display:flex;align-items:center;gap:8px;">
+            <span class="muted">Sort</span>
+            <select id="sort-select" class="select">
+                <option value="recent" {{ 'selected' if (sort or 'recent') == 'recent' else '' }}>Recently added</option>
+                <option value="alpha" {{ 'selected' if sort == 'alpha' else '' }}>Alphabetical</option>
+                <option value="year" {{ 'selected' if sort == 'year' else '' }}>Release year</option>
+            </select>
+        </label>
+    </div>
 
-    <div id="infinite-grid" class="grid" data-kind="movie" data-endpoint="/api/movies" data-page="{{ page or 1 }}" data-total-pages="{{ total_pages or 1 }}" data-page-size="{{ page_size or 60 }}">
+    <div id="infinite-grid" class="grid" data-kind="movie" data-endpoint="{{ endpoint or '/api/movies' }}" data-page="{{ page or 1 }}" data-total-pages="{{ total_pages or 1 }}" data-page-size="{{ page_size or 60 }}">
         {% for m in items %}
         {% set ej = m.extra_json or {} %}
         {% set poster = ej.get('poster') or m.poster_url or '/static/img/placeholder.png' %}
@@ -22,5 +32,18 @@
 {% block scripts %}
 {{ super() }}
 <script src="/static/js/infinite.js?v={{ ASSET_V }}" nonce="{{ request.state.csp_nonce }}"></script>
+<script nonce="{{ request.state.csp_nonce }}">
+  (function(){
+    const sel = document.getElementById('sort-select');
+    if (!sel) return;
+    sel.addEventListener('change', () => {
+      const v = sel.value || 'recent';
+      const url = new URL(location.href);
+      url.searchParams.set('sort', v);
+      url.searchParams.set('page', '1');
+      location.href = url.toString();
+    });
+  })();
+</script>
 {% endblock %}
 {% endblock %}

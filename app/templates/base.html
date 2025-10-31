@@ -140,7 +140,7 @@
     {% block extra_head %}{% endblock %}
 </head>
 
-<body>
+<body data-time-format="{{ TIME_FORMAT or '24h' }}">
     {% if not hide_chrome %}
     <header class="nav">
         <div class="nav-inner container">

@@ -75,3 +75,7 @@ coverage.xml
 *.pkg
 *.deb
 *.rpm
+
+# FFmpeg binaries (large, download separately)
+vendor/ffmpeg/*.exe
+vendor/ffmpeg/*.dll

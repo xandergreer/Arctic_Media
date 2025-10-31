@@ -229,64 +229,220 @@ async def _repair_tv_episodes(db: AsyncSession, library_id: str) -> dict:
 # ---- fire-and-forget helpers ----
 async def _bg_scan_library(library_id: str, job_id: str | None = None) -> None:
     """Run a library scan in the background using a fresh DB session."""
-    Session = get_sessionmaker()
-    async with Session() as db:
-        # mark job running
-        if job_id:
-            job = (await db.execute(select(BackgroundJob).where(BackgroundJob.id == job_id))).scalars().first()
-            if job:
-                job.status = "running"
-                job.message = "Scanning library"
-                await db.commit()
-        lib = (await db.execute(
-            select(Library).where(Library.id == library_id)
-        )).scalars().first()
-        if not lib:
-            return
-        # progress callback updates job
-        async def _progress(processed: int, total: int):
-            if not job_id:
-                return
-            j = (await db.execute(select(BackgroundJob).where(BackgroundJob.id == job_id))).scalars().first()
-            if j:
-                j.progress = processed
-                j.total = total
-                j.message = f"Scanning {processed}/{total}"
-                await db.commit()
-
-        stats = {}
-        # Extract simple fields to satisfy current scanner signatures
-        lib_name = lib.name
-        lib_type = lib.type
-        lib_id = lib.id
-        try:
-            if lib.type == "movie":
-                stats = await scan_movie_library(db, lib, lib_name, lib_type, lib_id, progress_cb=_progress)
-            elif lib.type == "tv":
-                stats = await scan_tv_library(db, lib, lib_name, lib_type, lib_id, progress_cb=_progress)
-            await db.commit()
-
+    # Create a new event loop context for this background task
+    import asyncio
+    try:
+        # Get or create a session maker for this context
+        Session = get_sessionmaker()
+        
+        async with Session() as db:
+            # mark job running
             if job_id:
                 job = (await db.execute(select(BackgroundJob).where(BackgroundJob.id == job_id))).scalars().first()
                 if job:
-                    job.status = "done"
-                    job.message = "Scan complete"
-                    job.result = stats
+                    job.status = "running"
+                    job.message = "Scanning library"
                     await db.commit()
-        except Exception as e:
-            # Ensure background job is marked failed instead of leaving UI polling forever
+            
+            lib = (await db.execute(
+                select(Library).where(Library.id == library_id)
+            )).scalars().first()
+            if not lib:
+                return
+                
+            # progress callback updates job
+            async def _progress(processed: int, total: int):
+                if not job_id:
+                    return
+                try:
+                    j = (await db.execute(select(BackgroundJob).where(BackgroundJob.id == job_id))).scalars().first()
+                    if j:
+                        j.progress = processed
+                        j.total = total
+                        j.message = f"Scanning {processed}/{total}"
+                        await db.commit()
+                except Exception:
+                    # Ignore progress update errors in background
+                    pass
+
+            stats = {}
+            # Extract simple fields to satisfy current scanner signatures
+            lib_name = lib.name
+            lib_type = lib.type
+            lib_id = lib.id
+            
             try:
-                await db.rollback()
+                if lib.type == "movie":
+                    stats = await scan_movie_library(db, lib, lib_name, lib_type, lib_id, progress_cb=_progress)
+                elif lib.type == "tv":
+                    stats = await scan_tv_library(db, lib, lib_name, lib_type, lib_id, progress_cb=_progress)
+                await db.commit()
+
+                if job_id:
+                    job = (await db.execute(select(BackgroundJob).where(BackgroundJob.id == job_id))).scalars().first()
+                    if job:
+                        job.status = "done"
+                        job.message = "Scan complete"
+                        job.result = stats
+                        await db.commit()
+                        
+            except Exception as e:
+                # Ensure background job is marked failed instead of leaving UI polling forever
+                try:
+                    await db.rollback()
+                except Exception:
+                    pass
+                if job_id:
+                    try:
+                        job = (await db.execute(select(BackgroundJob).where(BackgroundJob.id == job_id))).scalars().first()
+                        if job:
+                            job.status = "failed"
+                            job.message = f"Scan error: {e!s}"
+                            await db.commit()
+                    except Exception:
+                        pass
+                # Re-raise so it surfaces in logs
+                raise
+                
+    except Exception as e:
+        # Log any unexpected errors
+        import logging
+        logging.getLogger(__name__).error(f"Background scan failed: {e}")
+        raise
+
+def _bg_scan_library_sync(library_id: str, job_id: str | None = None) -> None:
+    """Run a library scan synchronously in the background using synchronous SQLAlchemy."""
+    from sqlalchemy import create_engine, event
+    from sqlalchemy.orm import sessionmaker
+    from .database import get_engine
+    from .config import settings
+    import os
+    from pathlib import Path
+    
+    try:
+        # Get the database URL from the async engine
+        async_url = get_engine().url
+        db_url = str(async_url)
+        # Convert async URL to sync URL
+        if db_url.startswith("sqlite+aiosqlite://"):
+            db_url = db_url.replace("sqlite+aiosqlite://", "sqlite://")
+        # Ensure absolute path for sqlite to avoid per-thread CWD issues
+        if db_url.startswith("sqlite:///"):
+            raw_path = db_url.replace("sqlite:///", "", 1)
+            if raw_path.startswith("./") or not os.path.isabs(raw_path):
+                abs_path = os.path.abspath(raw_path)
+                db_url = f"sqlite:///{abs_path}"
+        
+        # Create synchronous engine
+        sync_engine = create_engine(
+            db_url,
+            echo=False,
+            pool_pre_ping=True,
+            connect_args={"timeout": 30},
+        )
+        
+        # Apply SQLite pragmas
+        def _set_sqlite_pragmas(dbapi_conn, _record):
+            try:
+                cur = dbapi_conn.cursor()
+                cur.execute("PRAGMA journal_mode=WAL;")
+                cur.execute("PRAGMA synchronous=NORMAL;")
+                cur.execute("PRAGMA temp_store=MEMORY;")
+                cur.execute("PRAGMA busy_timeout=30000;")
+                cur.close()
             except Exception:
                 pass
+        
+        event.listen(sync_engine, "connect", _set_sqlite_pragmas)
+        
+        # Create synchronous session
+        sync_session = sessionmaker(bind=sync_engine, expire_on_commit=False, autoflush=False)
+        
+        with sync_session() as db:
+            # mark job running
             if job_id:
-                job = (await db.execute(select(BackgroundJob).where(BackgroundJob.id == job_id))).scalars().first()
+                job = db.query(BackgroundJob).filter(BackgroundJob.id == job_id).first()
                 if job:
-                    job.status = "failed"
-                    job.message = f"Scan error: {e!s}"
-                    await db.commit()
-            # Re-raise so it surfaces in logs
-            raise
+                    job.status = "running"
+                    job.message = "Scanning library"
+                    db.commit()
+            
+            lib = db.query(Library).filter(Library.id == library_id).first()
+            if not lib:
+                return
+                
+            # progress callback updates job
+            def _progress(processed: int, total: int):
+                if not job_id:
+                    return
+                try:
+                    j = db.query(BackgroundJob).filter(BackgroundJob.id == job_id).first()
+                    if j:
+                        j.progress = processed
+                        j.total = total
+                        j.message = f"Scanning {processed}/{total}"
+                        db.commit()
+                except Exception:
+                    # Ignore progress update errors in background
+                    pass
+
+            stats = {}
+            # Extract simple fields to satisfy current scanner signatures
+            lib_name = lib.name
+            lib_type = lib.type
+            lib_id = lib.id
+            
+            try:
+                if lib.type == "movie":
+                    # Import here to avoid circular imports
+                    from .scanner import scan_movie_library_sync
+                    stats = scan_movie_library_sync(db, lib, lib_name, lib_type, lib_id, progress_cb=_progress)
+                elif lib.type == "tv":
+                    from .scanner import scan_tv_library_sync
+                    stats = scan_tv_library_sync(db, lib, lib_name, lib_type, lib_id, progress_cb=_progress)
+                db.commit()
+                # If movie scan produced no known paths, emit diagnostic summary
+                if lib.type == "movie" and (stats.get("added",0) == 0):
+                    try:
+                        from sqlalchemy import select
+                        from .models import MediaFile, MediaItem
+                        cur_count = db.execute(select(MediaFile.path).join(MediaItem, MediaItem.id==MediaFile.media_item_id).where(MediaItem.library_id==lib.id)).all()
+                        import logging as _logging
+                        _logging.getLogger("scanner").info("diagnostic: media_files_in_db=%d", len(cur_count))
+                    except Exception:
+                        pass
+
+                if job_id:
+                    job = db.query(BackgroundJob).filter(BackgroundJob.id == job_id).first()
+                    if job:
+                        job.status = "done"
+                        job.message = "Scan complete"
+                        job.result = stats
+                        db.commit()
+                        
+            except Exception as e:
+                # Ensure background job is marked failed
+                try:
+                    db.rollback()
+                except Exception:
+                    pass
+                if job_id:
+                    try:
+                        job = db.query(BackgroundJob).filter(BackgroundJob.id == job_id).first()
+                        if job:
+                            job.status = "failed"
+                            job.message = f"Scan error: {e!s}"
+                            db.commit()
+                    except Exception:
+                        pass
+                # Re-raise so it surfaces in logs
+                raise
+                
+    except Exception as e:
+        # Log any unexpected errors
+        import logging
+        logging.getLogger(__name__).error(f"Background scan failed: {e}")
+        raise
 
 async def _bg_refresh_metadata(library_id: str, force: bool, only_missing: bool, job_id: str | None = None) -> None:
     Session = get_sessionmaker()
@@ -440,9 +596,46 @@ async def scan_library(
         db.add(job)
         await db.commit()
         await db.refresh(job)
-        asyncio.create_task(_bg_scan_library(library_id, job_id=job.id))
+        
+        # Run background scan synchronously in a thread
+        import threading
+        
+        def run_background_scan():
+            """Run the scan synchronously in a background thread"""
+            try:
+                _bg_scan_library_sync(library_id, job_id=job.id)
+            except Exception as e:
+                import logging
+                import traceback
+                logger = logging.getLogger(__name__)
+                logger.error(f"Background scan thread failed: {e}")
+                logger.error(f"Full traceback: {traceback.format_exc()}")
+                
+                # Mark job as failed
+                try:
+                    from sqlalchemy import create_engine
+                    from sqlalchemy.orm import sessionmaker
+                    from .database import get_engine
+                    async_url = get_engine().url
+                    db_url = str(async_url).replace("sqlite+aiosqlite://", "sqlite://")
+                    sync_engine = create_engine(db_url, echo=False)
+                    Session = sessionmaker(bind=sync_engine)
+                    with Session() as session:
+                        failed_job = session.query(BackgroundJob).filter(BackgroundJob.id == job.id).first()
+                        if failed_job:
+                            failed_job.status = "failed"
+                            failed_job.message = f"Scan failed: {str(e)}"
+                            session.commit()
+                except:
+                    pass
+        
+        # Start background thread
+        thread = threading.Thread(target=run_background_scan, daemon=True)
+        thread.start()
+        
         return {"ok": True, "queued": True, "job_id": job.id}
 
+    # Fallback to direct async scan if not background
     if lib.type == "movie":
         stats = await scan_movie_library(db, lib, library_name, library_type, library_id)
         return {"ok": True, **stats}
@@ -480,7 +673,30 @@ async def refresh_metadata_endpoint(
         db.add(job)
         await db.commit()
         await db.refresh(job)
-        asyncio.create_task(_bg_refresh_metadata(library_id, force=force, only_missing=only_missing, job_id=job.id))
+        
+        # Run background refresh in a thread to avoid SQLAlchemy async context issues
+        import concurrent.futures
+        import threading
+        
+        def run_background_refresh():
+            """Run the refresh in a separate thread with its own event loop"""
+            try:
+                # Create new event loop for this thread
+                import asyncio
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                
+                # Run the async background refresh function
+                loop.run_until_complete(_bg_refresh_metadata(library_id, force=force, only_missing=only_missing, job_id=job.id))
+                loop.close()
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).error(f"Background refresh thread failed: {e}")
+        
+        # Start background thread
+        thread = threading.Thread(target=run_background_refresh, daemon=True)
+        thread.start()
+        
         return {"ok": True, "queued": True, "job_id": job.id}
 
     stats = await enrich_library(
@@ -514,6 +730,167 @@ async def cleanup_samples(
     await db.execute(delete(MediaItem).where(MediaItem.id.in_(item_ids)))
     await db.commit()
     return {"removed": len(item_ids)}
+
+@router.post("/scan_all")
+async def scan_all_libraries(
+    background: bool = Query(True, description="Queue scan for all libraries and return immediately"),
+    refresh_metadata: bool = Query(True, description="After scan, refresh metadata for each library"),
+    db: AsyncSession = Depends(get_db),
+    admin = Depends(require_admin),
+):
+    # Get all libraries owned by this admin
+    libs = (await db.execute(
+        select(Library).where(Library.owner_user_id == admin.id).order_by(Library.created_at.desc())
+    )).scalars().all()
+
+    if not libs:
+        return {"ok": True, "queued": False, "message": "No libraries to scan."}
+
+    if background:
+        # Create a parent job to track overall progress
+        parent = BackgroundJob(job_type="scan_all", status="queued", progress=0, total=len(libs))
+        db.add(parent)
+        await db.commit()
+        await db.refresh(parent)
+
+        import threading
+        import logging
+        owner_id = admin.id  # capture primitive for thread safety
+
+        def run_scan_all():
+            try:
+                # Use synchronous engine/session similar to _bg_scan_library_sync
+                from sqlalchemy import create_engine
+                from sqlalchemy.orm import sessionmaker
+                from .database import get_engine
+
+                async_url = get_engine().url
+                db_url = str(async_url)
+                if db_url.startswith("sqlite+aiosqlite://"):
+                    db_url = db_url.replace("sqlite+aiosqlite://", "sqlite://")
+
+                sync_engine = create_engine(db_url, echo=False, pool_pre_ping=True, connect_args={"timeout": 30})
+                Session = sessionmaker(bind=sync_engine, expire_on_commit=False, autoflush=False)
+
+                with Session() as s:
+                    pj = s.query(BackgroundJob).filter(BackgroundJob.id == parent.id).first()
+                    if pj:
+                        pj.status = "running"
+                        pj.message = "Scanning all libraries"
+                        s.commit()
+
+                    completed = 0
+                    results: list[dict] = []
+                    for lib in s.query(Library).filter(Library.owner_user_id == owner_id).order_by(Library.created_at.desc()).all():
+                        # Create per-library child job
+                        child = BackgroundJob(job_type="scan_library", library_id=lib.id, status="queued", progress=0, total=None)
+                        s.add(child)
+                        s.commit()
+                        s.refresh(child)
+
+                        try:
+                            # Run scan synchronously
+                            if lib.type == "movie":
+                                from .scanner import scan_movie_library_sync
+                                stats = scan_movie_library_sync(s, lib, lib.name, lib.type, lib.id)
+                            else:
+                                from .scanner import scan_tv_library_sync
+                                stats = scan_tv_library_sync(s, lib, lib.name, lib.type, lib.id)
+                            s.commit()
+
+                            # Optionally refresh metadata per library
+                            if refresh_metadata:
+                                try:
+                                    from .config import settings as _settings
+                                    if getattr(_settings, "TMDB_API_KEY", None):
+                                        from .metadata import enrich_library as _enrich
+                                        _ = _enrich.__name__  # silence linter unused import
+                                        # Run async enrich via a temporary loop
+                                        import asyncio as _asyncio
+                                        from .database import get_sessionmaker as _get_sm
+                                        SessionAsync = _get_sm()
+                                        async def _do_enrich():
+                                            async with SessionAsync() as adb:
+                                                return await _enrich(adb, _settings.TMDB_API_KEY, lib.id, limit=5000, force=False, only_missing=True)
+                                        _loop = _asyncio.new_event_loop()
+                                        _asyncio.set_event_loop(_loop)
+                                        try:
+                                            _loop.run_until_complete(_do_enrich())
+                                        finally:
+                                            _loop.close()
+                                except Exception:
+                                    pass
+
+                            # Mark child job done
+                            cj = s.query(BackgroundJob).filter(BackgroundJob.id == child.id).first()
+                            if cj:
+                                cj.status = "done"
+                                cj.message = "Scan complete"
+                                cj.result = stats if isinstance(stats, dict) else {"stats": stats}
+                                s.commit()
+
+                            results.append({"library_id": lib.id, "result": stats})
+                        except Exception as e:
+                            # Mark child failed but continue
+                            try:
+                                s.rollback()
+                            except Exception:
+                                pass
+                            cj = s.query(BackgroundJob).filter(BackgroundJob.id == child.id).first()
+                            if cj:
+                                cj.status = "failed"
+                                cj.message = f"Scan error: {e!s}"
+                                s.commit()
+
+                        # Update parent progress
+                        completed += 1
+                        pj = s.query(BackgroundJob).filter(BackgroundJob.id == parent.id).first()
+                        if pj:
+                            pj.progress = completed
+                            pj.total = len(libs)
+                            pj.message = f"Processed {completed}/{len(libs)}"
+                            pj.result = {"completed": completed}
+                            s.commit()
+
+                    # Mark parent done
+                    pj = s.query(BackgroundJob).filter(BackgroundJob.id == parent.id).first()
+                    if pj:
+                        pj.status = "done"
+                        pj.message = "All scans complete"
+                        s.commit()
+            except Exception as e:
+                logging.getLogger(__name__).error(f"Scan-all failed: {e}")
+                try:
+                    from sqlalchemy import create_engine
+                    from sqlalchemy.orm import sessionmaker
+                    from .database import get_engine
+                    async_url = get_engine().url
+                    db_url = str(async_url).replace("sqlite+aiosqlite://", "sqlite://")
+                    sync_engine = create_engine(db_url, echo=False)
+                    Session = sessionmaker(bind=sync_engine)
+                    with Session() as s:
+                        pj = s.query(BackgroundJob).filter(BackgroundJob.id == parent.id).first()
+                        if pj:
+                            pj.status = "failed"
+                            pj.message = f"Scan-all error: {e!s}"
+                            s.commit()
+                except Exception:
+                    pass
+
+        threading.Thread(target=run_scan_all, daemon=True).start()
+        return {"ok": True, "queued": True, "job_id": parent.id, "total": len(libs)}
+
+    # Non-background: run sequentially (may take a while)
+    results = []
+    for lib in libs:
+        if lib.type == "movie":
+            stats = await scan_movie_library(db, lib, lib.name, lib.type, lib.id)
+        else:
+            stats = await scan_tv_library(db, lib, lib.name, lib.type, lib.id)
+        if refresh_metadata and settings.TMDB_API_KEY:
+            _ = await enrich_library(db, settings.TMDB_API_KEY, lib.id, limit=5000, force=False, only_missing=True)
+        results.append({"library_id": lib.id, "result": stats})
+    return {"ok": True, "queued": False, "results": results}
 
 @router.post("/{library_id}/retitle")
 async def retitle_movies(

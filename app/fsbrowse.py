@@ -4,6 +4,13 @@ from __future__ import annotations
 import os
 from typing import List, Optional
 
+try:
+    import ctypes
+    from ctypes import wintypes
+except ImportError:
+    ctypes = None
+    wintypes = None
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
@@ -32,42 +39,83 @@ def _split_csv(val: str) -> List[str]:
     return [p.strip() for p in val.replace(";", ",").split(",") if p.strip()]
 
 def _windows_drives() -> List[str]:
+    """Enumerate Windows drive roots more robustly.
+
+    Uses GetDriveTypeW to detect all drives (fixed, removable, network, SUBST, etc.).
+    This method is more reliable than GetLogicalDriveStringsW in some contexts.
+    """
     drives: List[str] = []
+    
+    if ctypes is not None:
+        try:
+            GetDriveTypeW = ctypes.windll.kernel32.GetDriveTypeW
+            GetDriveTypeW.argtypes = [wintypes.LPCWSTR]
+            GetDriveTypeW.restype = wintypes.UINT
+            
+            DRIVE_UNKNOWN = 0
+            DRIVE_NO_ROOT_DIR = 1
+            # Any other value means the drive exists (fixed, removable, network, etc.)
+            
+            for c in "ABCDEFGHIJKLMNOPQRSTUVWXYZ":
+                d = f"{c}:\\"
+                try:
+                    drive_type = GetDriveTypeW(d)
+                    if drive_type != DRIVE_UNKNOWN and drive_type != DRIVE_NO_ROOT_DIR:
+                        drives.append(d)
+                except Exception:
+                    # If GetDriveType fails, fall back to os.path.exists
+                    try:
+                        if os.path.exists(d):
+                            drives.append(d)
+                    except Exception:
+                        continue
+            
+            if drives:
+                return sorted([d.upper() for d in drives])
+        except Exception:
+            pass
+    
+    # Fallback: use basic os.path.exists check
     for c in "ABCDEFGHIJKLMNOPQRSTUVWXYZ":
         d = f"{c}:\\"
-        if os.path.exists(d):
-            drives.append(d)
-    return drives
+        try:
+            if os.path.exists(d):
+                drives.append(d)
+        except Exception:
+            continue
+    
+    return sorted([d.upper() for d in drives]) if drives else ["C:\\"]
 
 def _roots() -> List[str]:
     """
     Allowed roots based on settings.
-      - If FS_BROWSE_MODE=dev_open  -> expose all drives (Windows) or '/' + HOME (POSIX)
-      - Else if FS_BROWSE_ALLOW/FS_BROWSE_ROOTS set -> those paths
-      - Else:  **Windows:** expose all drives (friendly default)
-               **POSIX:**  expose '/' and HOME
+      - **Windows:** Always show all drives in the picker for better UX.
+        Allowlist restricts access but doesn't hide drives from the UI.
+      - **POSIX:** If FS_BROWSE_MODE=dev_open -> '/' + HOME, else allow_list
     """
     allow_cfg = settings.FS_BROWSE_ALLOW or getattr(settings, "FS_BROWSE_ROOTS", "")
-
+    
     dev_open = (settings.FS_BROWSE_MODE or "").lower() == "dev_open"
     allow_list = [_ for _ in (_split_csv(allow_cfg)) if os.path.isdir(os.path.abspath(_))]
 
-    if dev_open or not allow_list:
-        if os.name == "nt":
-            roots = _windows_drives()
-            if not roots:
-                # fallback to current drive root
-                drive = os.path.splitdrive(os.getcwd())[0] or "C:"
-                roots = [f"{drive}\\"]
-        else:
+    if os.name == "nt":
+        # Windows: Always show all drives in the picker, regardless of allowlist
+        # This allows users to browse all drives when adding libraries
+        roots = _windows_drives()
+        if not roots:
+            # fallback to current drive root
+            drive = os.path.splitdrive(os.getcwd())[0] or "C:"
+            roots = [f"{drive}\\"]
+        return roots
+    else:
+        # POSIX: Respect dev_open vs allowlist
+        if dev_open or not allow_list:
             roots = ["/"]
             home = os.path.expanduser("~")
             if os.path.isdir(home):
                 roots.append(home)
-        # if explicit allow_list exists, use it; otherwise, use the defaults above
-        return allow_list or roots
-
-    return [os.path.abspath(p) for p in allow_list]
+            return allow_list or roots
+        return [os.path.abspath(p) for p in allow_list]
 
 def _norm(p: str) -> str:
     return os.path.normcase(os.path.abspath(p))
