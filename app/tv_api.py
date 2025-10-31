@@ -3,6 +3,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
+from sqlalchemy.orm import selectinload
 from .database import get_db
 from .auth import get_current_user
 from .models import MediaItem, MediaKind
@@ -58,17 +59,29 @@ async def list_episodes(
     db: AsyncSession = Depends(get_db),
     user = Depends(get_current_user),
 ):
-    # find season item by title "Season NN"
-    season_title = f"Season {int(season):02d}"
-    season_item = (await db.execute(
-        select(MediaItem)
-        .where(MediaItem.parent_id == show_id, MediaItem.kind == MediaKind.season, MediaItem.title == season_title)
-    )).scalar_one_or_none()
+    # Try multiple season title formats to be more flexible
+    season_titles = [
+        f"Season {int(season):02d}",  # Season 01
+        f"Season {int(season)}",      # Season 1
+        f"S{int(season):02d}",        # S01
+        f"S{int(season)}",            # S1
+    ]
+    
+    season_item = None
+    for season_title in season_titles:
+        season_item = (await db.execute(
+            select(MediaItem)
+            .where(MediaItem.parent_id == show_id, MediaItem.kind == MediaKind.season, MediaItem.title == season_title)
+        )).scalar_one_or_none()
+        if season_item:
+            break
+    
     if not season_item:
         return []
 
     eps = (await db.execute(
         select(MediaItem)
+        .options(selectinload(MediaItem.files))
         .where(MediaItem.parent_id == season_item.id, MediaItem.kind == MediaKind.episode)
         .order_by(MediaItem.sort_title.asc())
     )).scalars().all()
@@ -76,10 +89,29 @@ async def list_episodes(
     out = []
     for e in eps:
         ej = e.extra_json or {}
+        # Get the first file ID for playback
+        first_file_id = None
+        if e.files:
+            first_file = e.files[0]
+            first_file_id = first_file.id
+        
+        # Clean up episode title (remove file extensions)
+        title = e.title or ""
+        if title:
+            # Remove common video file extensions
+            import re
+            title = re.sub(r'\.(mkv|mp4|avi|mov|wmv|flv|webm|m4v)$', '', title, flags=re.IGNORECASE)
+            # Clean up common patterns like "S01E01" at the beginning
+            title = re.sub(r'^S\d+E\d+\s*[-–]\s*', '', title, flags=re.IGNORECASE)
+            title = re.sub(r'^\d+x\d+\s*[-–]\s*', '', title, flags=re.IGNORECASE)
+            title = re.sub(r'^\d+\.\s*', '', title)  # Remove leading episode numbers like "1. "
+        
         out.append({
             "id": e.id,
-            "title": e.title,
+            "title": title,
             "still": ej.get("still"),
             "air_date": ej.get("air_date"),
+            "episode": ej.get("episode"),
+            "first_file_id": first_file_id,
         })
     return out

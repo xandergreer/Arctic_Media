@@ -106,10 +106,15 @@ def decode_token(token: str) -> Optional[dict[str, Any]]:
 def slugify(s: str) -> str:
     return _slugify(s)
 
-VIDEO_EXTS = {".mkv", ".mp4", ".m4v", ".avi", ".mov", ".wmv", ".mpg", ".mpeg"}
+VIDEO_EXTS = {
+    ".mkv", ".mp4", ".m4v", ".avi", ".mov", ".wmv", ".mpg", ".mpeg",
+    ".flv", ".webm", ".ts", ".m2ts", ".mts", ".divx", ".xvid", ".3gp", ".3g2",
+    ".asf", ".rm", ".rmvb", ".vob", ".ogv", ".qt", ".f4v", ".f4p"
+}
 
 def is_video_file(path: str) -> bool:
-    return os.path.splitext(path)[1].lower() in VIDEO_EXTS
+    ext = os.path.splitext(path)[1].lower()
+    return ext in VIDEO_EXTS
 
 _ARTICLE_RE = re.compile(r"^(the|a|an)\s+", re.I)
 def normalize_sort(title: str) -> str:
@@ -121,6 +126,10 @@ def normalize_sort(title: str) -> str:
     t = re.sub(r"\s+", " ", t).strip()
     return t
 
+def _log_request(req: Request, msg: str):
+    ua = req.headers.get("user-agent", "")
+    rng = req.headers.get("range", "")
+    print(f"[stream][req] {msg} ua='{ua[:60]}' range='{rng}'")
 # --- CSRF helpers ---------------------------------------------------------
 import base64, secrets, hmac  # (you likely already import hmac/base64 above)
 
@@ -162,7 +171,7 @@ _GROUP_OR_SERVICE = {
     "yify","rarbg","etrg","evo","joy","saon","flux","oft","ivy","lost","lama",
     "bhdstudio","refraction","pir8","okaystopcrying","hallowed","chivaman",
     "will1869","ethel","aoc","x0r","nan0","lootera","byndr","collective",
-    "multi","real",
+    "multi","real","tvsmash","dsny",
     "sample","trailer","theatrical","workprint","teaser"
 }
 _BREAK_TOKENS = {
@@ -267,9 +276,68 @@ def parse_movie_from_path(path: str) -> Optional[Tuple[str, Optional[int]]]:
         return None
     return (t, y)
 
-# TV
+# TV - Enhanced cleaning patterns
 _TV_SXXEYY = re.compile(r"(?i)\bS(\d{1,2})E(\d{1,2})\b")
 _TV_ALT   = re.compile(r"(?i)\b(\d{1,2})x(\d{1,2})\b")
+
+# Enhanced cleaning variables for better title extraction
+_QUALITY_PATTERNS = re.compile(r"(?i)\b(2160p|1080p|720p|480p|4k|8k|uhd|hd|sd)\b")
+_CODEC_PATTERNS = re.compile(r"(?i)\b(x264|x265|h\.?264|h\.?265|hevc|avc|av1|vp9|vc1)\b")
+_SOURCE_PATTERNS = re.compile(r"(?i)\b(web|webrip|webdl|web-dl|hdtv|hdrip|dvdrip|bdrip|brrip|bluray|blu-ray|remux|uhd)\b")
+_AUDIO_PATTERNS = re.compile(r"(?i)\b(aac[0-9\.]*|ac3|eac3|dd[p+]?[0-9\.]*|dts(-hd)?|ma|truehd|atmos|flac|mp3)\b")
+_GROUP_PATTERNS = re.compile(r"(?i)\b(ethel|tvsmash|dsny|evo|joy|saon|flux|oft|ivy|lost|lama|yify|rarbg|etrg|aoc|x0r|nan0)\b")
+_YEAR_IN_TITLE = re.compile(r"(?i)\b(19|20)\d{2}\b")
+_SEASON_RANGE = re.compile(r"(?i)\bS\d{1,2}(-S\d{1,2})?\b")
+
+def _clean_show_title_enhanced(title: str) -> str:
+    """Enhanced show title cleaning with configurable variables"""
+    if not title:
+        return ""
+    
+    # Start with the original title
+    cleaned = title.strip()
+    
+    # Remove file extension patterns first
+    cleaned = re.sub(r'\.(mkv|mp4|avi|mov|wmv|mpg|mpeg|m4v)$', '', cleaned, flags=re.I)
+    
+    # Remove quality indicators
+    cleaned = _QUALITY_PATTERNS.sub('', cleaned)
+    
+    # Remove codec information
+    cleaned = _CODEC_PATTERNS.sub('', cleaned)
+    
+    # Remove source information
+    cleaned = _SOURCE_PATTERNS.sub('', cleaned)
+    
+    # Remove audio information
+    cleaned = _AUDIO_PATTERNS.sub('', cleaned)
+    
+    # Remove release group tags
+    cleaned = _GROUP_PATTERNS.sub('', cleaned)
+    
+    # Remove years from titles (shows can be identified without years)
+    cleaned = _YEAR_IN_TITLE.sub('', cleaned)
+    
+    # Remove season/episode information
+    cleaned = _SEASON_RANGE.sub('', cleaned)
+    cleaned = re.sub(r'(?i)\bS\d{1,2}E\d{1,3}\b', '', cleaned)
+    cleaned = re.sub(r'(?i)\b\d{1,2}x\d{1,3}\b', '', cleaned)
+    
+    # Replace separators with spaces
+    cleaned = re.sub(r'[\._\-\[\](){}]+', ' ', cleaned)
+    
+    # Clean up multiple spaces and trim
+    cleaned = re.sub(r'\s+', ' ', cleaned).strip()
+    
+    # Remove common prefixes/suffixes
+    cleaned = re.sub(r'^(tv\s+|shows?\s+)', '', cleaned, flags=re.I)
+    cleaned = re.sub(r'\s+(tv|shows?)$', '', cleaned, flags=re.I)
+    
+    # Final cleanup
+    cleaned = cleaned.strip(' .-_')
+    
+    return cleaned
+
 def parse_tv_parts(rel_root: str, path: str):
     """
     Return (show_title:str, season:int, episode:int, ep_title_guess:str|None)
@@ -338,6 +406,118 @@ def parse_tv_parts(rel_root: str, path: str):
 # =======================
 # ffprobe (best-effort)
 # =======================
+
+# --- More tolerant TV parser (SxxEyy without separators, 1x02, Season NN + Eyy) ---
+_ROBUST_SXXEYY = re.compile(r"(?i)S(\d{1,2})\s*[\._\- ]*E(\d{1,3})")
+_ROBUST_ALT    = re.compile(r"(?i)\b(\d{1,2})x(\d{1,3})\b")
+_JUNK_TITLE_RE = re.compile(r"(?i)(?:\d{3,4}p|x26[45]|H\.?26[45]|HEVC|AVC|VP9|AV1|WEB(?:DL|Rip)?|BluRay|BRRip|HDR|DV|DDP?\.?\d(?:\.\d)?|AAC|AC3|DTS(?:-HD)?|TrueHD|Remux|NF|AMZN|HULU|ETHEL|TVSmash|DSNY)\b.*")
+
+def _parse_tv_parts_robust(rel_root: str, path: str):
+    fname = os.path.basename(path)
+    hay_raw = os.path.join(rel_root or "", fname)
+    # Normalize common separators INCLUDING path separators to spaces
+    norm = re.sub(r"[\._\-/\\]+", " ", hay_raw, flags=re.IGNORECASE).strip()
+    # Prefer the first folder segment as canonical show name when available
+    rel_first = ""
+    if rel_root:
+        parts = re.split(r"[\\/]+", rel_root)
+        rel_first = (parts[0] or "").strip()
+
+    # Handle multi-season ranges like S01-S03
+    multi_season = re.search(r"(?i)\bS(\d{1,2})\s*[-–]\s*S?(\d{1,2})\b", hay_raw)
+    if multi_season:
+        season_start = int(multi_season.group(1))
+        season_end = int(multi_season.group(2))
+        # For multi-season packs, use the first season and mark it as a pack
+        season = season_start
+        token_norm = re.sub(r"[\._\-]+", " ", multi_season.group(0)).lower()
+        idx = norm.lower().find(token_norm)
+        pre = norm[: idx if idx >= 0 else 0]
+        show_title = re.sub(r"\s+", " ", pre).strip(" -._")
+        # Enhanced cleaning for show title
+        show_title = _clean_show_title_enhanced(show_title)
+        # If a clean folder name exists, prefer it over a long pre-path
+        if rel_first and not rel_first.lower().startswith("season "):
+            folder_cleaned = _clean_show_title_enhanced(rel_first)
+            if folder_cleaned and len(folder_cleaned) >= 2:
+                show_title = folder_cleaned
+        # For multi-season packs, create a special episode indicator
+        episode = 0  # Special marker for season packs
+        ep_title_guess = f"Season {season_start}-{season_end} Pack"
+        return (show_title, season, episode, ep_title_guess)
+
+    m = _ROBUST_SXXEYY.search(hay_raw) or _ROBUST_SXXEYY.search(norm)
+    if m:
+        season = int(m.group(1)); episode = int(m.group(2))
+        token_norm = re.sub(r"[\._\-]+", " ", m.group(0)).lower()
+        idx = norm.lower().find(token_norm)
+        pre = norm[: idx if idx >= 0 else 0]
+        show_title = re.sub(r"\s+", " ", pre).strip(" -._")
+        # Enhanced cleaning for show title
+        show_title = _clean_show_title_enhanced(show_title)
+        # If a clean folder name exists, prefer it over a long pre-path
+        if rel_first and not rel_first.lower().startswith("season "):
+            folder_cleaned = _clean_show_title_enhanced(rel_first)
+            if folder_cleaned and len(folder_cleaned) >= 2:
+                show_title = folder_cleaned
+        tail = norm[(idx + len(m.group(0))) if idx >= 0 else 0 :].strip(" -._")
+        ep_title_guess = tail or None
+        # Enhanced episode title cleaning
+        if ep_title_guess:
+            ep_title_guess = _clean_show_title_enhanced(ep_title_guess)
+            if not ep_title_guess or len(ep_title_guess.strip()) < 2:
+                ep_title_guess = None
+        if ep_title_guess and _JUNK_TITLE_RE.fullmatch(ep_title_guess):
+            ep_title_guess = None
+        return (show_title, season, episode, ep_title_guess)
+
+    m = _ROBUST_ALT.search(norm)
+    if m:
+        season = int(m.group(1)); episode = int(m.group(2))
+        show_title = re.sub(r"\s+", " ", norm[: m.start()]).strip(" -._")
+        # Enhanced cleaning for show title
+        show_title = _clean_show_title_enhanced(show_title)
+        if rel_first and not rel_first.lower().startswith("season "):
+            folder_cleaned = _clean_show_title_enhanced(rel_first)
+            if folder_cleaned and len(folder_cleaned) >= 2:
+                show_title = folder_cleaned
+        ep_title_guess = norm[m.end():].strip(" -._") or None
+        return (show_title, season, episode, ep_title_guess)
+
+    s_season = re.search(r"(?i)\bseason\s*(\d{1,2})\b", norm)
+    if s_season:
+        season = int(s_season.group(1))
+        tail = norm[s_season.end():]
+        m_ep = re.search(r"\b(\d{1,3})\b", tail)
+        if m_ep:
+            episode = int(m_ep.group(1))
+        else:
+            # If no explicit episode number but we're in a season folder,
+            # try to extract episode number from filename or assume episode 1
+            filename_part = tail.split()[-2] if len(tail.split()) >= 2 else ""
+            ep_match = re.search(r"(?i)e(\d{1,3})|episode\s*(\d{1,3})", filename_part)
+            if ep_match:
+                episode = int(ep_match.group(1) or ep_match.group(2))
+            else:
+                # Assume episode 1 for files in season folders without explicit episode info
+                episode = 1
+        
+        show_title = re.sub(r"\s+", " ", norm[: s_season.start()]).strip(" -._")
+        # Enhanced cleaning for show title
+        show_title = _clean_show_title_enhanced(show_title)
+        if rel_first and not rel_first.lower().startswith("season "):
+            folder_cleaned = _clean_show_title_enhanced(rel_first)
+            if folder_cleaned and len(folder_cleaned) >= 2:
+                show_title = folder_cleaned
+        ep_title_guess = tail[m_ep.end():].strip(" -._") or None if m_ep else None
+        if ep_title_guess and _JUNK_TITLE_RE.fullmatch(ep_title_guess):
+            ep_title_guess = None
+        return (show_title, season, episode, ep_title_guess)
+
+    return None
+
+# Override with robust parser to improve detection and reduce duplicate titles
+parse_tv_parts = _parse_tv_parts_robust
 
 def ffprobe_info(path: str) -> dict:
     """

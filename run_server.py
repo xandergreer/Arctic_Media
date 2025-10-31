@@ -116,6 +116,17 @@ async def get_server_config():
                 except Exception:
                     # Non-fatal if we cannot persist; we still return the picked port
                     pass
+                # Friendly guidance on first-time setup
+                try:
+                    print("\n=== Arctic Media - First-Time Setup ===")
+                    print("Open your browser to:")
+                    print(f"  http://127.0.0.1:{port}")
+                    print("If accessing from another device on your network, use your PC's LAN IP,")
+                    print(f"for example:  http://YOUR_LAN_IP:{port}")
+                    print("========================================\n")
+                except Exception:
+                    # Printing guidance should never break startup
+                    pass
                 return host, port, False, "", ""
             break
     except Exception as e:
@@ -134,7 +145,7 @@ if __name__ == "__main__":
     if ssl_enabled and ssl_cert_file and ssl_key_file:
         # Check if SSL files exist
         if os.path.exists(ssl_cert_file) and os.path.exists(ssl_key_file):
-            print(f"ðŸ”’ SSL enabled with certificate: {ssl_cert_file}")
+            print(f"SSL enabled with certificate: {ssl_cert_file}")
             print(f"   Access via: https://{host}:{port}")
             
             # Prefer Hypercorn for HTTP/2 if available; fallback to Uvicorn
@@ -143,13 +154,32 @@ if __name__ == "__main__":
                 from hypercorn.asyncio import serve as hyper_serve
 
                 cfg = HyperConfig()
-                cfg.bind = [f"{host}:{port}"]
+                # Bind to both the domain and local IP to accept connections from both
+                cfg.bind = [f"{host}:{port}", "192.168.1.129:443"]
                 cfg.certfile = ssl_cert_file
                 cfg.keyfile = ssl_key_file
                 cfg.alpn_protocols = ["h2", "http/1.1"]
                 cfg.keep_alive_timeout = 20
+                cfg.graceful_timeout = 30
+                cfg.ssl_handshake_timeout = 10
                 print("[server] Using Hypercorn (HTTP/2 enabled)")
-                asyncio.run(hyper_serve(app, cfg))
+                try:
+                    asyncio.run(hyper_serve(app, cfg))
+                except Exception as ssl_error:
+                    print(f"[server] SSL error in Hypercorn: {ssl_error}")
+                    print("[server] Falling back to Uvicorn for SSL...")
+                    # Run on both addresses for Uvicorn fallback
+                    uvicorn.run(
+                        app, 
+                        host="0.0.0.0", 
+                        port=port, 
+                        log_level="info",
+                        proxy_headers=True,
+                        forwarded_allow_ips="*",
+                        timeout_keep_alive=20,
+                        ssl_certfile=ssl_cert_file,
+                        ssl_keyfile=ssl_key_file
+                    )
             except Exception as e:
                 print(f"[server] Hypercorn unavailable ({e!s}); falling back to Uvicorn (HTTP/1.1)")
                 # no reload, no workers; single-process is best for a desktop EXE
@@ -165,11 +195,11 @@ if __name__ == "__main__":
                     ssl_keyfile=ssl_key_file
                 )
         else:
-            print("âš ï¸  SSL files not found, falling back to HTTP")
+            print("WARNING: SSL files not found, falling back to HTTP")
             print(f"   Certificate file: {ssl_cert_file} - {'exists' if os.path.exists(ssl_cert_file) else 'missing'}")
             print(f"   Key file: {ssl_key_file} - {'exists' if os.path.exists(ssl_key_file) else 'missing'}")
             uvicorn.run(app, host=host, port=port, log_level="info", proxy_headers=True, forwarded_allow_ips="*", timeout_keep_alive=20)
     else:
-        print(f"ðŸŒ HTTP mode - Access via: http://{host}:{port}")
+        print(f"HTTP mode - Access via: http://{host}:{port}")
         # no reload, no workers; single-process is best for a desktop EXE
         uvicorn.run(app, host=host, port=port, log_level="info", proxy_headers=True, forwarded_allow_ips="*", timeout_keep_alive=20)

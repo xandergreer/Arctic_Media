@@ -280,6 +280,14 @@ async def startup_event():
             _hls_cont = (_cfg.get("hls_container") or "").lower().strip()
             if _hls_cont in ("fmp4", "ts"):
                 os.environ["ARCTIC_HLS_CONTAINER"] = _hls_cont
+            # Load general settings to expose TIME_FORMAT in templates (for Plyr overlay)
+            try:
+                _row_gen = (await _db.execute(_sa_select(_ServerSetting).where(_ServerSetting.key == "general"))).scalars().first()
+                _gen = (_row_gen.value or {}) if _row_gen else {}
+                _tf = (_gen.get("time_format") or "24h").lower()
+                app.state.templates.env.globals["TIME_FORMAT"] = "12h" if _tf.startswith("12") else "24h"
+            except Exception:
+                app.state.templates.env.globals["TIME_FORMAT"] = "24h"
     except Exception:
         pass
     await start_hls_cleanup_task(app)
@@ -412,20 +420,32 @@ async def movies_index(
     user = Depends(get_current_user),
     page: int = 1,
     page_size: int = 60,
+    sort: str = Query("recent", description="recent|alpha|year"),
 ):
     page = max(1, int(page or 1))
     page_size = max(12, min(120, int(page_size or 60)))
     total_count = (await db.execute(
         select(func.count()).select_from(MediaItem).where(MediaItem.kind == MediaKind.movie)
     )).scalar_one()
+    # Determine ordering
+    s = (sort or "recent").lower()
+    if s.startswith("alpha"):
+        order_clause = MediaItem.sort_title.asc()
+    elif s.startswith("year"):
+        # Newer releases first; NULLS LAST behavior approximated by ordering year desc then title
+        order_clause = MediaItem.year.desc().nullslast()
+    else:
+        order_clause = MediaItem.updated_at.desc()
+        s = "recent"
     items = (await db.execute(
         select(MediaItem)
         .where(MediaItem.kind == MediaKind.movie)
-        .order_by(MediaItem.updated_at.desc())
+        .order_by(order_clause)
         .limit(page_size)
         .offset((page - 1) * page_size)
     )).scalars().all()
     total_pages = max(1, (total_count + page_size - 1) // page_size)
+    endpoint = f"/api/movies?sort={s}"
     return templates.TemplateResponse(
         "movies.html",
         {
@@ -436,6 +456,8 @@ async def movies_index(
             "page": page,
             "total_pages": total_pages,
             "page_size": page_size,
+            "sort": s,
+            "endpoint": endpoint,
         },
     )
 
@@ -459,6 +481,7 @@ async def tv_grid(
     user = Depends(get_current_user),
     page: int = 1,
     page_size: int = 60,
+    sort: str = Query("recent", description="recent|alpha|year"),
 ):
     page = max(1, int(page or 1))
     page_size = max(12, min(120, int(page_size or 60)))
@@ -482,6 +505,7 @@ async def tv_grid(
             "page": page,
             "total_pages": total_pages,
             "page_size": page_size,
+            "sort": sort,
         },
     )
 
@@ -530,8 +554,8 @@ async def season_detail_page(show_id: str, season_num: int, request: Request, db
         .order_by(MediaItem.sort_title.asc())
     )).scalars().all()
 
-    # locate requested season
-    season_title = f"Season {season_num}"
+    # locate requested season (stored as 'Season 01', zero-padded)
+    season_title = f"Season {int(season_num):02d}"
     season = (await db.execute(
         select(MediaItem).where(
             MediaItem.parent_id == show.id,
@@ -543,6 +567,57 @@ async def season_detail_page(show_id: str, season_num: int, request: Request, db
         season = seasons[season_num - 1]
     if not season:
         return RedirectResponse(f"/show/{show.id}", status_code=307)
+
+    # 1) episodes attached to the season (ideal case)
+    eps = (await db.execute(
+        select(MediaItem)
+        .where(MediaItem.parent_id == season.id, MediaItem.kind == MediaKind.episode)
+        .order_by(MediaItem.sort_title.asc())
+    )).scalars().all()
+
+    # 2) fallback: some scanners attach episodes directly to the show.
+    if len(eps) <= 1:
+        loose_eps = (await db.execute(
+            select(MediaItem)
+            .where(MediaItem.parent_id == show.id, MediaItem.kind == MediaKind.episode)
+            .order_by(MediaItem.sort_title.asc())
+        )).scalars().all()
+
+        def is_match(e: MediaItem) -> bool:
+            ej = (e.extra_json or {})
+            if ej.get("season") == season_num or ej.get("season_number") == season_num:
+                return True
+            t = (e.title or "")
+            if re.search(fr"\bS0?{season_num}E\d{{1,3}}\b", t, re.I):
+                return True
+            if re.search(fr"\b{season_num}x\d{{1,3}}\b", t, re.I):
+                return True
+            return False
+
+        by_id = {e.id: e for e in eps}
+        for e in filter(is_match, loose_eps):
+            by_id.setdefault(e.id, e)
+        eps = list(by_id.values())
+        eps.sort(key=lambda e: e.sort_title or e.title or "")
+
+    # map each episode to include first_file_id
+    episodes = []
+    for ep in eps:
+        mf = (await db.execute(
+            select(MediaFile).where(MediaFile.media_item_id == ep.id).limit(1)
+        )).scalars().first()
+        episodes.append({
+            "id": ep.id,
+            "title": ep.title,
+            "poster_url": getattr(ep, "poster_url", None),
+            "extra_json": ep.extra_json,
+            "first_file_id": mf.id if mf else None,
+        })
+
+    return templates.TemplateResponse(
+        "show_detail.html",
+        {"request": request, "item": show, "seasons": seasons, "episodes": episodes, "first_play_file_id": None, "user": user},
+    )
 
 # ---- Admin: Update metadata (movie/show/episode)
 class UpdateMovieIn(BaseModel):
@@ -735,16 +810,25 @@ async def api_movies(
     user = Depends(get_current_user),
     page: int = 1,
     page_size: int = 60,
+    sort: str = Query("recent", description="recent|alpha|year"),
 ):
     page = max(1, int(page or 1))
     page_size = max(12, min(120, int(page_size or 60)))
     total_count = (await db.execute(
         select(func.count()).select_from(MediaItem).where(MediaItem.kind == MediaKind.movie)
     )).scalar_one()
+    s = (sort or "recent").lower()
+    if s.startswith("alpha"):
+        order_clause = MediaItem.sort_title.asc()
+    elif s.startswith("year"):
+        order_clause = MediaItem.year.desc().nullslast()
+    else:
+        order_clause = MediaItem.updated_at.desc()
+        s = "recent"
     rows = (await db.execute(
         select(MediaItem)
         .where(MediaItem.kind == MediaKind.movie)
-        .order_by(MediaItem.updated_at.desc())
+        .order_by(order_clause)
         .limit(page_size)
         .offset((page - 1) * page_size)
     )).scalars().all()
@@ -773,16 +857,27 @@ async def api_tv(
     user = Depends(get_current_user),
     page: int = 1,
     page_size: int = 60,
+    sort: str = Query("recent", description="recent|alpha|year"),
 ):
     page = max(1, int(page or 1))
     page_size = max(12, min(120, int(page_size or 60)))
     total_count = (await db.execute(
         select(func.count()).select_from(MediaItem).where(MediaItem.kind == MediaKind.show)
     )).scalar_one()
+    
+    s = (sort or "recent").lower()
+    if s.startswith("alpha"):
+        order_clause = MediaItem.sort_title.asc()
+    elif s.startswith("year"):
+        order_clause = MediaItem.year.desc().nullslast()
+    else:
+        order_clause = MediaItem.updated_at.desc()
+        s = "recent"
+    
     rows = (await db.execute(
         select(MediaItem)
         .where(MediaItem.kind == MediaKind.show)
-        .order_by(MediaItem.sort_title.asc())
+        .order_by(order_clause)
         .limit(page_size)
         .offset((page - 1) * page_size)
     )).scalars().all()
@@ -879,3 +974,37 @@ async def api_search(
         ],
         "total": len(movies) + len(tv_shows)
     }
+
+@app.get("/api/media/{media_id}/files")
+async def api_get_media_files(
+    media_id: str,
+    db: AsyncSession = Depends(get_db),
+    user = Depends(get_current_user),
+):
+    """Get media files for a specific media item"""
+    # Get the media item
+    media_item = await db.get(MediaItem, media_id)
+    if not media_item:
+        raise HTTPException(status_code=404, detail="Media item not found")
+    
+    # Get all files for this media item
+    files = (await db.execute(
+        select(MediaFile).where(MediaFile.media_item_id == media_id)
+    )).scalars().all()
+    
+    # Return file information
+    return [
+        {
+            "id": file.id,
+            "path": file.path,
+            "size_bytes": file.size_bytes,
+            "container": file.container,
+            "vcodec": file.vcodec,
+            "acodec": file.acodec,
+            "width": file.width,
+            "height": file.height,
+            "channels": file.channels,
+            "bitrate": file.bitrate,
+        }
+        for file in files
+    ]

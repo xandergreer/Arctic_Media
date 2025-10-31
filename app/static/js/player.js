@@ -99,11 +99,18 @@
 
         if (timeDisplay) {
             const now = new Date();
-            const hours = now.getHours().toString().padStart(2, '0');
-            const minutes = now.getMinutes().toString().padStart(2, '0');
-            const seconds = now.getSeconds().toString().padStart(2, '0');
-
-            timeDisplay.textContent = `${hours}:${minutes}:${seconds}`;
+            const fmt = (document.body?.dataset?.timeFormat || '24h').toLowerCase();
+            const h24 = now.getHours();
+            const minutes = String(now.getMinutes()).padStart(2, '0');
+            let text;
+            if (fmt === '12h') {
+                const h12 = (h24 % 12) || 12;
+                const ampm = h24 >= 12 ? 'PM' : 'AM';
+                text = `${String(h12).padStart(2,'0')}:${minutes} ${ampm}`;
+            } else {
+                text = `${String(h24).padStart(2,'0')}:${minutes}`;
+            }
+            timeDisplay.textContent = text;
         }
     }
 

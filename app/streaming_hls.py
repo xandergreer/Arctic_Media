@@ -218,21 +218,53 @@ def _ff_bin_from_bundle(name: str) -> str:
 
 def ffmpeg_exe() -> str:
     # Precedence: env/settings -> bundled -> PATH fallback
-    return _first_nonempty(
+    result = _first_nonempty(
         os.getenv("FFMPEG_BIN"),
         os.getenv("FFMPEG_PATH"),
         getattr(settings, "FFMPEG_PATH", None),
         _ff_bin_from_bundle("ffmpeg"),
     ) or "ffmpeg"
+    # If result is not absolute and we're frozen, verify it exists
+    if getattr(sys, "frozen", False) and not os.path.isabs(result):
+        # Try to resolve relative paths in frozen context
+        if getattr(sys, "_MEIPASS", None):
+            # Try both with and without .exe extension
+            for name in [result, result + ".exe"] if not result.endswith(".exe") else [result]:
+                meipass_path = os.path.join(sys._MEIPASS, name)  # type: ignore
+                if os.path.exists(meipass_path):
+                    return meipass_path
+        exe_dir = os.path.dirname(sys.executable)
+        # Try both with and without .exe extension
+        for name in [result, result + ".exe"] if not result.endswith(".exe") else [result]:
+            exe_dir_path = os.path.join(exe_dir, name)
+            if os.path.exists(exe_dir_path):
+                return exe_dir_path
+    return result
 
 def ffprobe_exe() -> str:
     # allow either FFPROBE_BIN or FFPROBE_PATH env overrides; also support settings
-    return _first_nonempty(
+    result = _first_nonempty(
         os.getenv("FFPROBE_BIN"),
         os.getenv("FFPROBE_PATH"),
         getattr(settings, "FFPROBE_PATH", None),
         _ff_bin_from_bundle("ffprobe"),
     ) or "ffprobe"
+    # If result is not absolute and we're frozen, verify it exists
+    if getattr(sys, "frozen", False) and not os.path.isabs(result):
+        # Try to resolve relative paths in frozen context
+        if getattr(sys, "_MEIPASS", None):
+            # Try both with and without .exe extension
+            for name in [result, result + ".exe"] if not result.endswith(".exe") else [result]:
+                meipass_path = os.path.join(sys._MEIPASS, name)  # type: ignore
+                if os.path.exists(meipass_path):
+                    return meipass_path
+        exe_dir = os.path.dirname(sys.executable)
+        # Try both with and without .exe extension
+        for name in [result, result + ".exe"] if not result.endswith(".exe") else [result]:
+            exe_dir_path = os.path.join(exe_dir, name)
+            if os.path.exists(exe_dir_path):
+                return exe_dir_path
+    return result
 
 def _pick_audio_map_for_path(src_path: Path, preferred_lang: Optional[str] = None, forced_idx: Optional[int] = None) -> str:
     """Return an ffmpeg -map selector for the best audio stream.
@@ -810,10 +842,22 @@ async def direct_file_serve(
 async def progressive_fallback(
     item_id: str,
     request: Request,
+    token: Optional[str] = Query(None),
     db: AsyncSession = Depends(get_db),
-    user = Depends(get_current_user),
 ):
     """Progressive MP4 fallback with guaranteed browser-compatible codecs"""
+    # Verify token if provided (for mobile app)
+    if token:
+        try:
+            payload = decode_token(token)
+            if not payload or payload.get("typ") != "access":
+                raise HTTPException(status_code=401, detail="Invalid token")
+        except Exception:
+            raise HTTPException(status_code=401, detail="Invalid token")
+    else:
+        # If no token provided, require user authentication
+        user = await get_current_user(request, db)
+    
     item, file_row = await get_item_and_file(db, item_id)
     src_path = _resolve_src_path(file_row)
     if not src_path.exists():
@@ -1061,9 +1105,20 @@ async def hls_master(
     vh: Optional[int] = None,
     aidx: Optional[int] = None,
     alang: Optional[str] = None,
+    token: Optional[str] = Query(None),
     db: AsyncSession = Depends(get_db),
-    user = Depends(get_current_user),
 ):
+    # Verify token if provided (for mobile app)
+    if token:
+        try:
+            payload = decode_token(token)
+            if not payload or payload.get("typ") != "access":
+                raise HTTPException(status_code=401, detail="Invalid token")
+        except Exception:
+            raise HTTPException(status_code=401, detail="Invalid token")
+    else:
+        # If no token provided, require user authentication
+        user = await get_current_user(request, db)
     # Apply forced container from settings, if configured
     try:
         forced = (os.getenv("ARCTIC_HLS_CONTAINER", "") or "").lower()
@@ -1175,8 +1230,17 @@ async def hls_master(
     return Response(manifest, media_type="application/vnd.apple.mpegurl", headers=headers)
 
 @router.get("/{item_id}/hls/{job_id}/init.mp4")
-async def hls_init_segment(item_id: str, job_id: str, request: Request):
-    await ensure_segment_auth(request)
+async def hls_init_segment(item_id: str, job_id: str, request: Request, token: Optional[str] = Query(None)):
+    # Verify token if provided (for mobile app)
+    if token:
+        try:
+            payload = decode_token(token)
+            if not payload or payload.get("typ") != "access":
+                raise HTTPException(status_code=401, detail="Invalid token")
+        except Exception:
+            raise HTTPException(status_code=401, detail="Invalid token")
+    else:
+        await ensure_segment_auth(request)
     job = _JOBS.get(job_id)
     if not job or job.item_id != item_id:
         # Reconstruct minimal job view for cross-worker access
@@ -1189,8 +1253,17 @@ async def hls_init_segment(item_id: str, job_id: str, request: Request):
     return FileResponse(p, media_type="video/mp4", headers={"Cache-Control": "no-store"})
 
 @router.get("/{item_id}/hls/{job_id}/{segment}")
-async def hls_segment(item_id: str, job_id: str, segment: str, request: Request):
-    await ensure_segment_auth(request)
+async def hls_segment(item_id: str, job_id: str, segment: str, request: Request, token: Optional[str] = Query(None)):
+    # Verify token if provided (for mobile app)
+    if token:
+        try:
+            payload = decode_token(token)
+            if not payload or payload.get("typ") != "access":
+                raise HTTPException(status_code=401, detail="Invalid token")
+        except Exception:
+            raise HTTPException(status_code=401, detail="Invalid token")
+    else:
+        await ensure_segment_auth(request)
     job = _JOBS.get(job_id)
     if not job or job.item_id != item_id:
         # Deduce container from segment name

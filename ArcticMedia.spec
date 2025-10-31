@@ -1,16 +1,24 @@
 # -*- mode: python ; coding: utf-8 -*-
 from PyInstaller.utils.hooks import collect_submodules
+from PyInstaller.utils.hooks import collect_all
 
-hiddenimports = ['aiosqlite', 'jose', 'jose.backends.cryptography_backend', 'argon2._ffi']
+datas = [('app\\static', 'app\\static'), ('app\\templates', 'app\\templates')]
+binaries = [('vendor\\ffmpeg\\ffmpeg.exe', '.'), ('vendor\\ffmpeg\\ffprobe.exe', '.')]
+hiddenimports = ['aiosqlite', 'sqlalchemy.dialects.sqlite.aiosqlite', 'jose', 'jose.backends.cryptography_backend', 'pydantic_core._pydantic_core', 'greenlet._greenlet']
 hiddenimports += collect_submodules('jose')
 hiddenimports += collect_submodules('cryptography')
+hiddenimports += collect_submodules('sqlalchemy.dialects')
+tmp_ret = collect_all('pydantic_core')
+datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
+tmp_ret = collect_all('greenlet')
+datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 
 
 a = Analysis(
-    ['run_server.py'],
+    ['gui_app.py'],
     pathex=[],
-    binaries=[],
-    datas=[('app\\templates', 'app\\templates'), ('app\\static', 'app\\static'), ('.env', '.')],
+    binaries=binaries,
+    datas=datas,
     hiddenimports=hiddenimports,
     hookspath=[],
     hooksconfig={},
@@ -34,7 +42,7 @@ exe = EXE(
     upx=True,
     upx_exclude=[],
     runtime_tmpdir=None,
-    console=True,
+    console=False,
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,

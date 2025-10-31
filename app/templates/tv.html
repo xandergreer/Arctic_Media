@@ -2,27 +2,51 @@
 {% block title %}TV Shows • Arctic{% endblock %}
 
 {% block content %}
-    <h1>TV Shows</h1>
-    <div class="muted">{{ count or (items|length) }} titles</div>
+<h1>TV Shows</h1>
+<div class="muted" style="display:flex;gap:12px;align-items:center;justify-content:space-between;flex-wrap:wrap">
+    <span>{{ count or (items|length) }} titles</span>
+    <label style="display:flex;align-items:center;gap:8px;">
+        <span class="muted">Sort</span>
+        <select id="sort-select" class="select">
+            <option value="recent" {{ 'selected' if (sort or 'recent' )=='recent' else '' }}>Recently added</option>
+            <option value="alpha" {{ 'selected' if sort=='alpha' else '' }}>Alphabetical</option>
+            <option value="year" {{ 'selected' if sort=='year' else '' }}>Release year</option>
+        </select>
+    </label>
+</div>
 
-    <div id="infinite-grid" class="grid" data-kind="tv" data-endpoint="/api/tv" data-page="{{ page or 1 }}" data-total-pages="{{ total_pages or 1 }}" data-page-size="{{ page_size or 60 }}">
-        {% for s in items %}
-        {% set meta = s.extra_json or {} %}
-        {% set poster = meta.get('poster') or s.poster_url or '/static/img/placeholder.png' %}
-        <a class="card" href="/show/{{ s.id }}" title="{{ s.title }}">
-            <img loading="lazy" src="{{ poster }}" alt="{{ s.title }}">
-            <div class="card-meta">
-                <div class="title">{{ s.title }}</div>
-                {% if meta.get('first_air_date') %}<div class="sub">{{ meta['first_air_date'][:4] }}</div>{% endif %}
-            </div>
-        </a>
-        {% else %}
-        <p>No TV shows indexed yet.</p>
-        {% endfor %}
-    </div>
-    <div id="infinite-sentinel" style="height: 1px;"></div>
+<div id="infinite-grid" class="grid" data-kind="tv" data-endpoint="/api/tv" data-page="{{ page or 1 }}"
+    data-total-pages="{{ total_pages or 1 }}" data-page-size="{{ page_size or 60 }}">
+    {% for s in items %}
+    {% set meta = s.extra_json or {} %}
+    {% set poster = meta.get('poster') or s.poster_url or '/static/img/placeholder.png' %}
+    <a class="card" href="/show/{{ s.id }}" title="{{ s.title }}">
+        <img loading="lazy" src="{{ poster }}" alt="{{ s.title }}">
+        <div class="card-meta">
+            <div class="title">{{ s.title }}</div>
+            {% if meta.get('first_air_date') %}<div class="sub">{{ meta['first_air_date'][:4] }}</div>{% endif %}
+        </div>
+    </a>
+    {% else %}
+    <p>No TV shows indexed yet.</p>
+    {% endfor %}
+</div>
+<div id="infinite-sentinel" style="height: 1px;"></div>
 {% block scripts %}
 {{ super() }}
 <script src="/static/js/infinite.js?v={{ ASSET_V }}" nonce="{{ request.state.csp_nonce }}"></script>
+<script nonce="{{ request.state.csp_nonce }}">
+    (function () {
+        const sel = document.getElementById('sort-select');
+        if (!sel) return;
+        sel.addEventListener('change', () => {
+            const v = sel.value || 'recent';
+            const url = new URL(location.href);
+            url.searchParams.set('sort', v);
+            url.searchParams.set('page', '1');
+            location.href = url.toString();
+        });
+    })();
+</script>
 {% endblock %}
 {% endblock %}
