@@ -20,6 +20,16 @@ from .utils import create_token, decode_token
 
 log = logging.getLogger("hls")
 
+# Helper function to get base URL, preferring public_base_url from settings
+def get_base_url(request: Request) -> str:
+    """Get base URL for URL generation, preferring public_base_url from settings."""
+    # Check if public_base_url is set in request.state (from middleware)
+    public_url = getattr(request.state, "public_base_url", None)
+    if public_url:
+        return public_url.rstrip("/")
+    # Fall back to request.base_url
+    return str(request.base_url).rstrip("/")
+
 # Routers
 router = APIRouter(prefix="/stream", tags=["stream"])
 jf_router = APIRouter(prefix="/Videos", tags=["videos"])
@@ -1224,7 +1234,7 @@ async def hls_master(
         return RedirectResponse(url=f"/stream/{item.id}/auto", status_code=302)
 
     seg_token = _issue_seg_token({"aud": STREAM_AUDIENCE, "item": item.id, "job": job.job_id}, minutes=5)
-    base_url = f"{request.base_url}stream/{item.id}/hls/{job.job_id}".rstrip("/")
+    base_url = f"{get_base_url(request)}/stream/{item.id}/hls/{job.job_id}".rstrip("/")
     manifest = await _rewrite_ffmpeg_playlist(job, base_url, seg_token)
     headers = {"Cache-Control": "no-store", "Pragma": "no-cache"}
     return Response(manifest, media_type="application/vnd.apple.mpegurl", headers=headers)
@@ -1438,7 +1448,7 @@ async def jf_variant_playlist(item_id: str, job_id: str, request: Request, db: A
         await _wait_for_file(job.workdir / "seg_00000.ts", 5.0)
 
     seg_token = _issue_seg_token({"aud": STREAM_AUDIENCE, "item": item_id, "job": job_id}, minutes=5)
-    base_url = f"{request.base_url}Videos/{item_id}/hls/{job_id}".rstrip("/")
+    base_url = f"{get_base_url(request)}/Videos/{item_id}/hls/{job_id}".rstrip("/")
     manifest = await _rewrite_ffmpeg_playlist(job, base_url, seg_token)
     return PlainTextResponse(manifest, media_type="application/vnd.apple.mpegurl")
 

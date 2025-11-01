@@ -43,6 +43,7 @@ from .database import init_db, get_db
 from .auth import router as auth_router, get_current_user, ACCESS_COOKIE, require_admin
 from .utils import decode_token, normalize_sort
 from .libraries import router as libraries_router
+from .pairing import router as pairing_router
 # from .browse import router as browse_router  # (left disabled to avoid path clashes)
 from .fsbrowse import router as fs_router
 from .admin_users import router as admin_users_router
@@ -59,12 +60,23 @@ from .streaming_hls import (
     start_hls_cleanup_task,
     stop_hls_cleanup_task,
 )
-from .models import Library, MediaItem, MediaKind, User, MediaFile
+from .models import Library, MediaItem, MediaKind, User, MediaFile, ServerSetting
 from .metadata import _movie_detail_pack, _search_movie, _tv_detail_pack, _search_tv, _episode_detail_pack
 from .scheduler import start_scheduler
 
 # ── App setup ─────────────────────────────────────────────────────────────────
 app = FastAPI(title="Arctic Media", version="2.0.0")
+
+# Cache for public_base_url to avoid DB queries on every request
+_public_base_url_cache: Optional[str] = None
+_cache_time: float = 0
+CACHE_TTL = 60.0  # Cache for 60 seconds
+
+def invalidate_public_base_url_cache():
+    """Invalidate the public_base_url cache (call when settings change)."""
+    global _public_base_url_cache, _cache_time
+    _public_base_url_cache = None
+    _cache_time = 0
 
 # ── Static & templates ────────────────────────────────────────────────────────
 def _resolve_resource_dirs():
@@ -113,6 +125,47 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Public base URL override: use public_base_url from settings for URL generation
+@app.middleware("http")
+async def public_base_url_override(request: Request, call_next):
+    """Override request.base_url with public_base_url from settings when available."""
+    global _public_base_url_cache, _cache_time
+    
+    try:
+        # Check cache first
+        if time.time() - _cache_time > CACHE_TTL:
+            # Refresh cache from database
+            try:
+                async for db in get_db():
+                    remote_settings = (await db.execute(
+                        select(ServerSetting).where(ServerSetting.key == "remote")
+                    )).scalars().first()
+                    
+                    if remote_settings and remote_settings.value:
+                        public_url = remote_settings.value.get("public_base_url", "").strip().rstrip("/")
+                        if public_url:
+                            _public_base_url_cache = public_url
+                        else:
+                            _public_base_url_cache = None
+                    else:
+                        _public_base_url_cache = None
+                    _cache_time = time.time()
+                    break
+            except Exception:
+                # If DB query fails, clear cache to try again next time
+                _public_base_url_cache = None
+        
+        # Store in request.state for use in route handlers
+        if _public_base_url_cache:
+            request.state.public_base_url = _public_base_url_cache
+        else:
+            request.state.public_base_url = None
+    except Exception:
+        # Best-effort; fall through on any error
+        request.state.public_base_url = None
+    
+    return await call_next(request)
 
 # Smart LAN redirect: if client IP is private and LOCAL_BASE_URL is configured, redirect HTML pages
 @app.middleware("http")
@@ -210,7 +263,7 @@ async def require_login_for_pages(request: Request, call_next):
         if (
             path.startswith("/static/")
             or path.startswith("/auth/")
-            or path in {"/login", "/register", "/favicon.ico"}
+            or path in {"/login", "/register", "/pair", "/favicon.ico"}
             or path.startswith("/docs")
             or path.startswith("/redoc")
             or path == "/openapi.json"
@@ -226,7 +279,11 @@ async def require_login_for_pages(request: Request, call_next):
                 token = request.cookies.get(ACCESS_COOKIE)
                 payload = decode_token(token) if token else None
                 if not payload or payload.get("typ") != "access":
-                    return RedirectResponse("/login", status_code=307)
+                    # Preserve the intended URL so user can return after login
+                    return_url = str(request.url.path)
+                    if request.url.query:
+                        return_url += "?" + request.url.query
+                    return RedirectResponse(f"/login?return_url={return_url}", status_code=307)
     except Exception:
         pass
     return await call_next(request)
@@ -896,6 +953,7 @@ async def health_check():
 
 # ── Routers (order matters a bit; keep app pages first, then APIs) ────────────
 app.include_router(auth_router, prefix="/auth")
+app.include_router(pairing_router)  # /pair/request, /pair/poll, /pair/activate, /pair
 app.include_router(libraries_router)
 # app.include_router(browse_router)  # left disabled to prevent conflicts with /movies etc.
 app.include_router(fs_router)

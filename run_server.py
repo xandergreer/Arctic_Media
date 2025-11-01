@@ -154,8 +154,8 @@ if __name__ == "__main__":
                 from hypercorn.asyncio import serve as hyper_serve
 
                 cfg = HyperConfig()
-                # Bind to both the domain and local IP to accept connections from both
-                cfg.bind = [f"{host}:{port}", "192.168.1.129:443"]
+                # Bind to the configured host and port
+                cfg.bind = [f"{host}:{port}"]
                 cfg.certfile = ssl_cert_file
                 cfg.keyfile = ssl_key_file
                 cfg.alpn_protocols = ["h2", "http/1.1"]

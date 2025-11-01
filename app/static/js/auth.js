@@ -24,21 +24,16 @@
     const loginMsg = $('login-msg');
 
     loginForm?.addEventListener('submit', async (e) => {
-        e.preventDefault();
-        loginMsg && (loginMsg.textContent = '');
-        if (loginBtn) { loginBtn.disabled = true; loginBtn.classList.add('is-loading'); }
-
-        const fd = new FormData(loginForm);
-        const payload = { identifier: fd.get('identifier'), password: fd.get('password') };
-
-        try {
-            await post('/auth/login', payload);
-            window.location.href = '/';
-        } catch (err) {
-            if (loginMsg) loginMsg.textContent = err.message || 'Sign in failed';
-        } finally {
-            if (loginBtn) { loginBtn.disabled = false; loginBtn.classList.remove('is-loading'); }
+        // Get return URL from query params and add to form action
+        const params = new URLSearchParams(window.location.search);
+        const returnUrl = params.get('return_url');
+        if (returnUrl) {
+            loginForm.action = `/auth/login?return_url=${encodeURIComponent(returnUrl)}`;
         }
+        
+        // Don't prevent default - let the form submit naturally
+        // This ensures cookies are set properly by the browser
+        // The server will redirect after setting cookies
     });
 
     // ---- REGISTER ----

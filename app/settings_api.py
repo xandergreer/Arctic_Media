@@ -12,6 +12,15 @@ from .config import settings as cfg
 
 router = APIRouter(prefix="/admin/settings", tags=["settings"])
 
+# Import cache invalidation function
+def invalidate_public_base_url_cache():
+    """Invalidate public_base_url cache when settings change."""
+    try:
+        from .main import invalidate_public_base_url_cache as _invalidate
+        _invalidate()
+    except Exception:
+        pass
+
 # Defaults shown in UI
 DEFAULTS = {
     "general": {
@@ -137,6 +146,8 @@ async def patch_settings(body: SettingsPatch, _: str = Depends(require_admin), d
         await _upsert(db, "general", body.general.model_dump())
     if body.remote is not None:
         await _upsert(db, "remote", body.remote.model_dump())
+        # Invalidate cache when remote settings (including public_base_url) change
+        invalidate_public_base_url_cache()
     if body.transcoder is not None:
         await _upsert(db, "transcoder", body.transcoder.model_dump())
     if body.server is not None:

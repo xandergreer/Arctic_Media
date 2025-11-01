@@ -131,9 +131,17 @@ async def login(request: Request, db: AsyncSession = Depends(get_db)):
         resp.set_cookie("am_csrf", csrf, httponly=False, samesite="lax", secure=bool(getattr(settings, "COOKIE_SECURE", False)), path="/")
         return resp
 
-    resp = RedirectResponse(url="/home", status_code=303)
-    resp.set_cookie(ACCESS_COOKIE, access, httponly=True, samesite="lax", secure=bool(getattr(settings, "COOKIE_SECURE", False)), path="/")
-    resp.set_cookie("am_csrf", csrf, httponly=False, samesite="lax", secure=bool(getattr(settings, "COOKIE_SECURE", False)), path="/")
+    # Check for return URL (e.g., from /pair page)
+    return_url = request.query_params.get("return_url") or "/home"
+    # Only allow redirects to safe paths
+    if return_url.startswith("/") and not return_url.startswith("//"):
+        redirect_url = return_url
+    else:
+        redirect_url = "/home"
+    
+    resp = RedirectResponse(url=redirect_url, status_code=303)
+    resp.set_cookie(ACCESS_COOKIE, access, httponly=True, samesite="lax", secure=bool(getattr(settings, "COOKIE_SECURE", False)), path="/", max_age=ACCESS_TOKEN_EXPIRE_SECONDS)
+    resp.set_cookie("am_csrf", csrf, httponly=False, samesite="lax", secure=bool(getattr(settings, "COOKIE_SECURE", False)), path="/", max_age=ACCESS_TOKEN_EXPIRE_SECONDS)
     return resp
 
 @router.post("/logout")
@@ -141,15 +149,6 @@ async def logout(request: Request):
     resp = RedirectResponse("/login", status_code=303) if _wants_html(request) else JSONResponse({"ok": True})
     resp.delete_cookie(ACCESS_COOKIE, path="/")
     return resp
-
-@router.get("/me")
-async def me(user=Depends(lambda req=...: get_current_user(req))):
-    return {
-        "id": user.id,
-        "username": user.username,
-        "email": getattr(user, "email", None),
-        "is_admin": getattr(user, "is_admin", True if not hasattr(user, "is_admin") else bool(user.is_admin)),
-    }
 
 # -------- Dependencies --------
 async def get_current_user(request: Request, db: AsyncSession = Depends(get_db)) -> User:
@@ -166,6 +165,15 @@ async def get_current_user(request: Request, db: AsyncSession = Depends(get_db))
     if not user:
         raise HTTPException(401, "User not found")
     return user
+
+@router.get("/me")
+async def me(user: User = Depends(get_current_user)):
+    return {
+        "id": str(user.id),
+        "username": user.username,
+        "email": getattr(user, "email", None),
+        "is_admin": getattr(user, "is_admin", True if not hasattr(user, "is_admin") else bool(user.is_admin)),
+    }
 
 async def require_admin(user: User = Depends(get_current_user)) -> User:
     # If the model has no is_admin flag, allow (single-user desktop default).

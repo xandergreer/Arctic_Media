@@ -32,8 +32,61 @@ def _default_port() -> int:
         return 8085
 
 
+def _get_server_config_sync():
+    """Get server configuration from database synchronously."""
+    try:
+        import asyncio
+        from run_server import get_server_config
+        
+        # Try to get config from database
+        loop = None
+        try:
+            loop = asyncio.get_event_loop()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+        
+        host, port, ssl_enabled, ssl_cert_file, ssl_key_file = loop.run_until_complete(get_server_config())
+        
+        # Determine scheme and host for display
+        scheme = "https" if ssl_enabled else "http"
+        display_host = "127.0.0.1"  # Always use localhost for GUI button
+        
+        return {
+            "host": host,
+            "port": port,
+            "ssl_enabled": ssl_enabled,
+            "ssl_cert_file": ssl_cert_file,
+            "ssl_key_file": ssl_key_file,
+            "url": f"{scheme}://{display_host}:{port}",
+            "display": f"{scheme}://{display_host}:{port}" if port != (443 if ssl_enabled else 80) else f"{scheme}://{display_host}",
+        }
+    except Exception:
+        # Fallback to defaults
+        port = _default_port()
+        return {
+            "host": "0.0.0.0",
+            "port": port,
+            "ssl_enabled": False,
+            "ssl_cert_file": "",
+            "ssl_key_file": "",
+            "url": f"http://127.0.0.1:{port}",
+            "display": f"http://127.0.0.1:{port}",
+        }
+
+
 def _server_url() -> str:
-    return f"http://127.0.0.1:{_default_port()}"
+    """Get server URL for opening browser."""
+    config = _get_server_config_sync()
+    return config["url"]
+
+
+def _server_info() -> str:
+    """Get server info string for display."""
+    config = _get_server_config_sync()
+    scheme = "HTTPS" if config["ssl_enabled"] else "HTTP"
+    port_info = f":{config['port']}" if config['port'] != (443 if config['ssl_enabled'] else 80) else ""
+    return f"{scheme} on 127.0.0.1{port_info}"
 
 
 def _resource_path(rel: str) -> str:
@@ -176,7 +229,9 @@ class App:
         ttk.Button(frm, text="Scan All (scan + refresh)", command=self._scan_all).grid(column=0, row=3, columnspan=2, padx=4, pady=4, sticky="ew")
         ttk.Button(frm, text="Show Logs", command=self._show_logs).grid(column=2, row=3, padx=4, pady=4, sticky="ew")
 
-        ttk.Label(frm, text=f"Listening on: {_server_url()}").grid(column=0, row=4, columnspan=3, sticky="w", pady=(8, 0))
+        self.server_info_var = tk.StringVar(value="Listening on: (checking...)")
+        ttk.Label(frm, textvariable=self.server_info_var).grid(column=0, row=4, columnspan=3, sticky="w", pady=(8, 0))
+        self._update_server_info()
 
         for i in range(3):
             frm.columnconfigure(i, weight=1)
@@ -223,6 +278,7 @@ class App:
         try:
             self.manager.start()
             time.sleep(0.3)
+            self._update_server_info()  # Update server info after start
             self._maybe_first_run_tip()
         except Exception as e:
             if messagebox:
@@ -253,9 +309,20 @@ class App:
                     self.root.after(0, lambda: messagebox.showerror("Scan All", f"Failed to queue scans: {e}"))
         threading.Thread(target=_worker, daemon=True).start()
 
+    def _update_server_info(self) -> None:
+        """Update server info display."""
+        try:
+            info = _server_info()
+            self.server_info_var.set(f"Listening on: {info}")
+        except Exception:
+            self.server_info_var.set(f"Listening on: {_server_url()}")
+    
     def _status_updater(self) -> None:
         txt = "Status: Running" if self.manager.is_running() else "Status: Stopped"
         self.status_var.set(txt)
+        # Update server info periodically (every 5 seconds)
+        if hasattr(self, 'server_info_var'):
+            self.root.after(5000, self._update_server_info)
         self.root.after(1000, self._status_updater)
 
     def _logs_window(self):
@@ -407,13 +474,43 @@ class App:
 def main() -> None:
     # Single-binary dispatcher: '--server' starts the server, otherwise start GUI
     if any(arg == "--server" for arg in sys.argv[1:]):
-        # Start server directly via uvicorn to avoid run_server import issues in single-EXE mode
+        # Use run_server.py's configuration logic to read from database
         try:
+            import asyncio
             import uvicorn  # type: ignore
             from app.main import app  # type: ignore
-            host = os.getenv("HOST", "0.0.0.0")
-            port = int(os.getenv("PORT", "8085"))
-            uvicorn.run(app, host=host, port=port, log_level="info", proxy_headers=True, forwarded_allow_ips="*", timeout_keep_alive=20)
+            from run_server import get_server_config  # type: ignore
+            
+            # Get server configuration from database (includes SSL settings)
+            host, port, ssl_enabled, ssl_cert_file, ssl_key_file = asyncio.run(get_server_config())
+            
+            print(f"Starting Arctic Media server on {host}:{port}")
+            print(f"External access: {'enabled' if host == '0.0.0.0' else 'disabled'}")
+            
+            if ssl_enabled and ssl_cert_file and ssl_key_file:
+                import os
+                if os.path.exists(ssl_cert_file) and os.path.exists(ssl_key_file):
+                    print(f"SSL enabled with certificate: {ssl_cert_file}")
+                    print(f"   Access via: https://{host}:{port}")
+                    uvicorn.run(
+                        app, 
+                        host=host, 
+                        port=port, 
+                        log_level="info",
+                        proxy_headers=True,
+                        forwarded_allow_ips="*",
+                        timeout_keep_alive=20,
+                        ssl_certfile=ssl_cert_file,
+                        ssl_keyfile=ssl_key_file
+                    )
+                else:
+                    print("WARNING: SSL files not found, falling back to HTTP")
+                    print(f"   Certificate file: {ssl_cert_file} - {'exists' if os.path.exists(ssl_cert_file) else 'missing'}")
+                    print(f"   Key file: {ssl_key_file} - {'exists' if os.path.exists(ssl_key_file) else 'missing'}")
+                    uvicorn.run(app, host=host, port=port, log_level="info", proxy_headers=True, forwarded_allow_ips="*", timeout_keep_alive=20)
+            else:
+                print(f"HTTP mode - Access via: http://{host}:{port}")
+                uvicorn.run(app, host=host, port=port, log_level="info", proxy_headers=True, forwarded_allow_ips="*", timeout_keep_alive=20)
         except Exception as e:
             import traceback
             sys.stderr.write("Failed to start server: " + str(e) + "\n" + traceback.format_exc())

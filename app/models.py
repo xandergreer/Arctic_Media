@@ -90,6 +90,22 @@ class DeviceSession(Base):
 
     user: Mapped["User"] = relationship("User", back_populates="devices")
 
+
+class DevicePairing(Base):
+    __tablename__ = "device_pairings"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    device_code: Mapped[str] = mapped_column(String(64), unique=True, index=True)  # Secret, only known to device
+    user_code: Mapped[str] = mapped_column(String(12), unique=True, index=True)  # Human-readable (e.g., "ABCD-1234")
+    user_id: Mapped[Optional[str]] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=True, index=True)
+    status: Mapped[str] = mapped_column(String(20), default="pending")  # pending, authorized, expired
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    activated_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+
+    user: Mapped[Optional["User"]] = relationship("User")
+
+
 # ---- Libraries & Media ----
 class Library(Base):
     __tablename__ = "libraries"
