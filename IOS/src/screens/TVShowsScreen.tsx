@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useLayoutEffect } from 'react';
 import {
   View,
   Text,
@@ -8,24 +8,43 @@ import {
   Image,
   ActivityIndicator,
   Alert,
+  Dimensions,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { StackNavigationProp } from '@react-navigation/stack';
 import { RootStackParamList } from '../navigation/AppNavigator';
 import { mediaAPI } from '../api/media';
 import { TVShow } from '../types';
+import OptionsMenu from '../components/OptionsMenu';
+import { usePreferencesStore } from '../store/preferencesStore';
 
 type TVShowsScreenNavigationProp = StackNavigationProp<RootStackParamList, 'TVShows'>;
 
 export default function TVShowsScreen() {
   const navigation = useNavigation<TVShowsScreenNavigationProp>();
+  const { tvShowDensity, setTVShowDensity, loadPreferences } = usePreferencesStore();
   const [shows, setShows] = useState<TVShow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [windowWidth, setWindowWidth] = useState(Dimensions.get('window').width);
 
   useEffect(() => {
     loadShows();
+    loadPreferences();
   }, []);
+
+  useEffect(() => {
+    const subscription = Dimensions.addEventListener('change', ({ window }) => {
+      setWindowWidth(window.width);
+    });
+    return () => subscription?.remove();
+  }, []);
+
+  useLayoutEffect(() => {
+    navigation.setOptions({
+      headerRight: () => <OptionsMenu density={tvShowDensity} onDensityChange={setTVShowDensity} />,
+    });
+  }, [navigation, tvShowDensity, setTVShowDensity]);
 
   const loadShows = async () => {
     try {
@@ -47,9 +66,12 @@ export default function TVShowsScreen() {
     });
   };
 
-  const renderShowItem = ({ item }: { item: TVShow }) => (
+  const renderShowItem = ({ item }: { item: TVShow }) => {
+    const itemWidth = (windowWidth - 48 - (tvShowDensity - 1) * 8) / tvShowDensity;
+    
+    return (
     <TouchableOpacity
-      style={styles.showItem}
+      style={[styles.showItem, { width: itemWidth }]}
       onPress={() => handleShowPress(item)}
     >
       <View style={styles.posterContainer}>
@@ -85,7 +107,8 @@ export default function TVShowsScreen() {
         )}
       </View>
     </TouchableOpacity>
-  );
+    );
+  };
 
   if (loading) {
     return (
@@ -110,12 +133,15 @@ export default function TVShowsScreen() {
   return (
     <View style={styles.container}>
       <FlatList
+        key={`grid-${tvShowDensity}`}
         data={shows}
         renderItem={renderShowItem}
         keyExtractor={(item) => item.id}
         contentContainerStyle={styles.listContainer}
         showsVerticalScrollIndicator={false}
-        numColumns={2}
+        numColumns={tvShowDensity}
+        columnWrapperStyle={tvShowDensity > 1 ? styles.row : undefined}
+        extraData={tvShowDensity}
       />
     </View>
   );
@@ -164,10 +190,12 @@ const styles = StyleSheet.create({
   listContainer: {
     padding: 16,
   },
-  showItem: {
-    width: '48%',
+  row: {
+    justifyContent: 'space-between',
     marginBottom: 24,
-    marginHorizontal: '1%',
+  },
+  showItem: {
+    marginBottom: 24,
   },
   posterContainer: {
     width: '100%',

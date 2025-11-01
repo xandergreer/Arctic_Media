@@ -5,8 +5,10 @@ import ServerConfigScreen from '../screens/ServerConfigScreen';
 import LoginScreen from '../screens/LoginScreen';
 import HomeScreen from '../screens/HomeScreen';
 import TVShowsScreen from '../screens/TVShowsScreen';
+import MoviesScreen from '../screens/MoviesScreen';
 import ShowDetailScreen from '../screens/ShowDetailScreen';
 import MovieDetailScreen from '../screens/MovieDetailScreen';
+import EpisodeDetailScreen from '../screens/EpisodeDetailScreen';
 import SeasonsScreen from '../screens/SeasonsScreen';
 import EpisodesScreen from '../screens/EpisodesScreen';
 import PlayerScreen from '../screens/PlayerScreen';
@@ -20,6 +22,7 @@ export type RootStackParamList = {
   Movies: undefined;
   ShowDetail: { showId: string };
   MovieDetail: { movieId: string };
+  EpisodeDetail: { episodeId: string };
   Seasons: { showId: string; showTitle: string; showPoster?: string };
   Episodes: { showId: string; season: number; showTitle: string; showPoster?: string };
   Player: { itemId: string; title: string };
@@ -69,6 +72,11 @@ export default function AppNavigator() {
             options={{ title: 'TV Shows' }}
           />
           <Stack.Screen
+            name="Movies"
+            component={MoviesScreen}
+            options={{ title: 'Movies' }}
+          />
+          <Stack.Screen
             name="ShowDetail"
             component={ShowDetailScreen}
             options={{ title: 'TV Show Details', headerShown: false }}
@@ -77,6 +85,11 @@ export default function AppNavigator() {
             name="MovieDetail"
             component={MovieDetailScreen}
             options={{ title: 'Movie Details', headerShown: false }}
+          />
+          <Stack.Screen
+            name="EpisodeDetail"
+            component={EpisodeDetailScreen}
+            options={{ title: 'Episode Details', headerShown: false }}
           />
           <Stack.Screen
             name="Seasons"

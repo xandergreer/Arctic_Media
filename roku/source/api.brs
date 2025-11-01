@@ -1,10 +1,36 @@
-function HttpJson(url as string, method as string, body = invalid as dynamic) as object
+function LoadTokens() as object
+  sec = CreateObject("roRegistrySection", "ArcticMedia")
+  tokens = {}
+  tokens.access_token = sec.Read("access_token")
+  tokens.refresh_token = sec.Read("refresh_token")
+  if tokens.access_token = invalid then tokens.access_token = ""
+  if tokens.refresh_token = invalid then tokens.refresh_token = ""
+  return tokens
+end function
+
+function LoadServerUrl() as string
+  ' Load from registry (persistent storage)
+  sec = CreateObject("roRegistrySection", "ArcticMedia")
+  url = sec.Read("server_url")
+  if url = invalid then url = ""
+  return url
+end function
+
+function HttpJson(url as string, method as string, body = invalid as dynamic, requiresAuth = false as boolean) as object
   req = CreateObject("roUrlTransfer")
   req.SetUrl(url)
   req.setCertificatesFile("common:/certs/ca-bundle.crt")
   req.InitClientCertificates()
   req.AddHeader("Accept", "application/json")
   req.SetTimeout(10)  ' 10 second timeout
+  
+  ' Add Bearer token if authentication required
+  if requiresAuth then
+    tokens = LoadTokens()
+    if tokens.access_token <> "" then
+      req.AddHeader("Authorization", "Bearer " + tokens.access_token)
+    end if
+  end if
   
   json_str = ""
   if body <> invalid and type(body) = "roAssociativeArray" then

@@ -149,3 +149,94 @@ async def list_episodes(
             "first_file_id": first_file_id,
         })
     return out
+
+def _episode_out(e: MediaItem, show_poster: str | None = None, season_poster: str | None = None):
+    """Format episode output with all metadata"""
+    ej = e.extra_json or {}
+    
+    # Get episode title - prefer metadata name, then cleaned title
+    title = ej.get("name")  # TMDB episode name from metadata
+    if not title:
+        # Fallback to cleaning the stored title (filename-based)
+        title = e.title or ""
+        if title:
+            # Remove common video file extensions
+            import re
+            title = re.sub(r'\.(mkv|mp4|avi|mov|wmv|flv|webm|m4v)$', '', title, flags=re.IGNORECASE)
+            # Clean up common patterns like "S01E01" at the beginning
+            title = re.sub(r'^S\d+E\d+\s*[-–]\s*', '', title, flags=re.IGNORECASE)
+            title = re.sub(r'^\d+x\d+\s*[-–]\s*', '', title, flags=re.IGNORECASE)
+            title = re.sub(r'^\d+\.\s*', '', title)  # Remove leading episode numbers like "1. "
+    
+    # Get episode still with fallback
+    episode_still = ej.get("still")
+    if not episode_still or (isinstance(episode_still, str) and not episode_still.strip()):
+        episode_still = season_poster if season_poster else show_poster
+    
+    # Get all files for the episode
+    file_ids = [f.id for f in (e.files or [])]
+    first_file_id = file_ids[0] if file_ids else None
+    
+    return {
+        "id": e.id,
+        "title": title,
+        "overview": ej.get("overview") or e.overview,
+        "still": episode_still,
+        "still_original": ej.get("still_original"),
+        "air_date": ej.get("air_date"),
+        "episode": ej.get("episode"),
+        "season": ej.get("season"),
+        "vote_average": ej.get("vote_average"),
+        "vote_count": ej.get("vote_count"),
+        "first_file_id": first_file_id,
+        "file_ids": file_ids,
+    }
+
+@router.get("/episode/{episode_id}")
+async def get_episode(
+    episode_id: str,
+    db: AsyncSession = Depends(get_db),
+    user = Depends(get_current_user),
+):
+    """Get a single episode by ID with full details"""
+    ep = (await db.execute(
+        select(MediaItem)
+        .options(selectinload(MediaItem.files))
+        .where(MediaItem.id == episode_id, MediaItem.kind == MediaKind.episode)
+    )).scalar_one_or_none()
+    
+    if not ep:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail="Episode not found")
+    
+    # Get show and season posters for fallback
+    show_poster = None
+    season_poster = None
+    
+    # Find season via parent relationship
+    if ep.parent_id:
+        season_item = (await db.execute(
+            select(MediaItem)
+            .where(MediaItem.id == ep.parent_id, MediaItem.kind == MediaKind.season)
+        )).scalar_one_or_none()
+        
+        if season_item:
+            season_ej = season_item.extra_json or {}
+            season_poster = season_ej.get("poster") or season_item.poster_url
+            
+            # Find show via season's parent
+            if season_item.parent_id:
+                show_item = (await db.execute(
+                    select(MediaItem)
+                    .where(MediaItem.id == season_item.parent_id, MediaItem.kind == MediaKind.show)
+                )).scalar_one_or_none()
+                
+                if show_item:
+                    show_ej = show_item.extra_json or {}
+                    show_poster = show_ej.get("poster") or show_item.poster_url
+    
+    # If season poster is not available, use show poster as fallback
+    if not season_poster:
+        season_poster = show_poster
+    
+    return _episode_out(ep, show_poster, season_poster)

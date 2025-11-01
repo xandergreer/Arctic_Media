@@ -1,23 +1,18 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
   StyleSheet,
   TouchableOpacity,
-  Alert,
-  Dimensions,
   StatusBar,
 } from 'react-native';
-import { useRoute, RouteProp, useFocusEffect } from '@react-navigation/native';
+import { useRoute, RouteProp } from '@react-navigation/native';
 import { useNavigation } from '@react-navigation/native';
 import { RootStackParamList } from '../navigation/AppNavigator';
 import { mediaAPI } from '../api/media';
 import { VideoView, useVideoPlayer } from 'expo-video';
-import * as ScreenOrientation from 'expo-screen-orientation';
 
 type PlayerScreenRouteProp = RouteProp<RootStackParamList, 'Player'>;
-
-const { width, height } = Dimensions.get('window');
 
 export default function PlayerScreen() {
   const route = useRoute<PlayerScreenRouteProp>();
@@ -47,64 +42,9 @@ export default function PlayerScreen() {
     setupStreaming();
   }, [itemId]);
 
-  // Lock to landscape when screen is focused
-  useFocusEffect(
-    React.useCallback(() => {
-      let isMounted = true;
-      let orientationModuleAvailable = true;
-      
-      // Lock to landscape when screen comes into focus
-      const lockOrientation = async () => {
-        try {
-          // Check if ScreenOrientation is available
-          if (ScreenOrientation && ScreenOrientation.lockAsync) {
-            console.log('Attempting to lock orientation to landscape...');
-            const result = await ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.LANDSCAPE);
-            if (isMounted) {
-              console.log('Orientation locked successfully:', result);
-            }
-          } else {
-            orientationModuleAvailable = false;
-            console.warn('ScreenOrientation module not available. Using native fullscreen controls for rotation.');
-          }
-        } catch (err: any) {
-          orientationModuleAvailable = false;
-          console.error('Failed to lock orientation:', err);
-          // If it's a module not found error, the native module isn't available
-          if (err?.message?.includes('module') || err?.code === 'MODULE_NOT_FOUND' || err?.message?.includes('not found')) {
-            console.warn('expo-screen-orientation native module not available. Native fullscreen controls will handle rotation.');
-          }
-        }
-      };
-
-      lockOrientation();
-
-      return () => {
-        isMounted = false;
-        // Unlock when screen loses focus (only if module was available)
-        if (orientationModuleAvailable && ScreenOrientation && ScreenOrientation.unlockAsync) {
-          ScreenOrientation.unlockAsync().catch(err => {
-            console.log('Failed to unlock orientation on cleanup:', err);
-          });
-        }
-      };
-    }, [])
-  );
-  
-  // Also lock when player becomes ready
-  useEffect(() => {
-    if (player && !loading && streamingUrl) {
-      const timeout = setTimeout(() => {
-        if (ScreenOrientation && ScreenOrientation.lockAsync) {
-          ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.LANDSCAPE).catch(err => {
-            // Silently fail if already locked or module unavailable
-            console.log('Orientation lock skipped (may not be available in Expo Go)');
-          });
-        }
-      }, 500);
-      return () => clearTimeout(timeout);
-    }
-  }, [player, loading, streamingUrl]);
+  // Note: We don't manually lock orientation anymore
+  // The native controls handle fullscreen rotation automatically
+  // Manual locking was causing conflicts with playback controls
 
   // Create video player with expo-video
   // Note: useVideoPlayer hook recreates player when source changes
@@ -128,62 +68,8 @@ export default function PlayerScreen() {
     }
   }, [streamingUrl, player, loading]);
 
-  const [isPlaying, setIsPlaying] = useState(false);
-  const [currentTime, setCurrentTime] = useState(0);
-  const [duration, setDuration] = useState(0);
-  const [showControls, setShowControls] = useState(false);
-  const controlsTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-
-
-  // Track player status
-  useEffect(() => {
-    if (!player) return;
-
-    const updateStatus = () => {
-      setIsPlaying(player.playing);
-      setCurrentTime(player.currentTime / 1000); // Convert to seconds
-      setDuration(player.duration / 1000); // Convert to seconds
-    };
-
-    const subscription = player.addListener('statusChange', () => {
-      updateStatus();
-    });
-
-    updateStatus(); // Initial update
-
-    return () => {
-      subscription?.remove();
-    };
-  }, [player]);
-
-  const togglePlayPause = () => {
-    if (player) {
-      if (player.playing) {
-        player.pause();
-      } else {
-        player.play();
-      }
-    }
-  };
-
-  const formatTime = (seconds: number) => {
-    const mins = Math.floor(seconds / 60);
-    const secs = Math.floor(seconds % 60);
-    return `${mins}:${secs.toString().padStart(2, '0')}`;
-  };
-
   const handleBackPress = () => {
     navigation.goBack();
-  };
-
-  const handleVideoTap = () => {
-    setShowControls(!showControls);
-  };
-
-  const handleSeek = (position: number) => {
-    if (player) {
-      player.currentTime = position * 1000; // Convert to milliseconds
-    }
   };
 
   if (loading) {
@@ -230,49 +116,12 @@ export default function PlayerScreen() {
         />
       ) : null}
 
-      {/* Back button overlay */}
-      <View style={styles.backButtonContainer}>
+      {/* Back button overlay - with pointer events disabled on container to avoid blocking native controls */}
+      <View style={styles.backButtonContainer} pointerEvents="box-none">
         <TouchableOpacity style={styles.backButton} onPress={handleBackPress}>
           <Text style={styles.backButtonText}>‹ Back</Text>
         </TouchableOpacity>
       </View>
-
-      {/* Custom controls - not needed when using native controls */}
-      {false && (
-        <>
-          <View style={styles.playbackControlsOverlay}>
-            <TouchableOpacity style={styles.playButton} onPress={togglePlayPause}>
-              <Text style={styles.playButtonText}>
-                {isPlaying ? '⏸' : '▶'}
-              </Text>
-            </TouchableOpacity>
-          </View>
-
-          <View style={styles.bottomControls}>
-            <View style={styles.titleContainer}>
-              <Text style={styles.titleText}>{title}</Text>
-            </View>
-            
-            <View style={styles.progressContainer}>
-              <Text style={styles.timeText}>
-                {formatTime(currentTime)} / {formatTime(duration)}
-              </Text>
-              {duration > 0 && (
-                <View style={styles.seekBarContainer}>
-                  <View style={styles.seekBarBackground}>
-                    <View 
-                      style={[
-                        styles.seekBarProgress, 
-                        { width: `${(currentTime / duration) * 100}%` }
-                      ]} 
-                    />
-                  </View>
-                </View>
-              )}
-            </View>
-          </View>
-        </>
-      )}
     </View>
   );
 }
@@ -320,34 +169,20 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   video: {
-    width: Dimensions.get('window').width,
-    height: Dimensions.get('window').height,
     position: 'absolute',
     top: 0,
     left: 0,
     right: 0,
     bottom: 0,
+    width: '100%',
+    height: '100%',
   },
   backButtonContainer: {
     position: 'absolute',
     top: 50,
     left: 20,
-    zIndex: 1000,
-    elevation: 1000,
-  },
-  playbackControlsOverlay: {
-    position: 'absolute',
-    top: '50%',
-    left: '50%',
-    transform: [{ translateX: -30 }, { translateY: -30 }],
-    zIndex: 10,
-  },
-  bottomControls: {
-    position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
-    zIndex: 10,
+    zIndex: 1, // Behind native video controls
+    elevation: 1,
   },
   backButton: {
     backgroundColor: 'rgba(0, 0, 0, 0.8)',
@@ -361,66 +196,5 @@ const styles = StyleSheet.create({
     color: '#ffffff',
     fontSize: 16,
     fontWeight: '600',
-  },
-  playbackControls: {
-    flex: 1,
-    alignItems: 'center',
-  },
-  playButton: {
-    width: 60,
-    height: 60,
-    borderRadius: 30,
-    backgroundColor: 'rgba(0, 0, 0, 0.7)',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  playButtonText: {
-    fontSize: 24,
-    color: '#ffffff',
-  },
-  progressContainer: {
-    padding: 20,
-    alignItems: 'center',
-    width: '100%',
-  },
-  timeText: {
-    color: '#ffffff',
-    fontSize: 16,
-    backgroundColor: 'rgba(0, 0, 0, 0.7)',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 4,
-    marginBottom: 12,
-  },
-  seekBarContainer: {
-    width: '100%',
-    paddingHorizontal: 20,
-  },
-  seekBarBackground: {
-    width: '100%',
-    height: 4,
-    backgroundColor: 'rgba(255, 255, 255, 0.3)',
-    borderRadius: 2,
-    overflow: 'hidden',
-  },
-  seekBarProgress: {
-    height: '100%',
-    backgroundColor: '#007AFF',
-    borderRadius: 2,
-  },
-  titleContainer: {
-    paddingHorizontal: 20,
-    paddingTop: 20,
-    paddingBottom: 10,
-  },
-  titleText: {
-    color: '#ffffff',
-    fontSize: 18,
-    fontWeight: 'bold',
-    textAlign: 'center',
-    backgroundColor: 'rgba(0, 0, 0, 0.7)',
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: 6,
   },
 });

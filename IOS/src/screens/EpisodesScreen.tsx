@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useLayoutEffect } from 'react';
 import {
   View,
   Text,
@@ -11,31 +11,46 @@ import {
   Dimensions,
 } from 'react-native';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
-import { StackNavigationProp } from '@react-navigation/native';
+import { StackNavigationProp } from '@react-navigation/stack';
 import { RootStackParamList } from '../navigation/AppNavigator';
 import { mediaAPI } from '../api/media';
 import { Episode } from '../types';
 import { useAuthStore } from '../store/authStore';
+import OptionsMenu from '../components/OptionsMenu';
+import { usePreferencesStore } from '../store/preferencesStore';
 
 type EpisodesScreenNavigationProp = StackNavigationProp<RootStackParamList, 'Episodes'>;
 type EpisodesScreenRouteProp = RouteProp<RootStackParamList, 'Episodes'>;
-
-const { width } = Dimensions.get('window');
-const CARD_WIDTH = (width - 48) / 2; // 2 columns with padding
 
 export default function EpisodesScreen() {
   const navigation = useNavigation<EpisodesScreenNavigationProp>();
   const route = useRoute<EpisodesScreenRouteProp>();
   const { showId, season, showTitle, showPoster } = route.params;
   const { serverConfig } = useAuthStore();
+  const { episodeDensity, setEpisodeDensity, loadPreferences } = usePreferencesStore();
 
   const [episodes, setEpisodes] = useState<Episode[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [windowWidth, setWindowWidth] = useState(Dimensions.get('window').width);
 
   useEffect(() => {
     loadEpisodes();
+    loadPreferences();
   }, [showId, season]);
+
+  useEffect(() => {
+    const subscription = Dimensions.addEventListener('change', ({ window }) => {
+      setWindowWidth(window.width);
+    });
+    return () => subscription?.remove();
+  }, []);
+
+  useLayoutEffect(() => {
+    navigation.setOptions({
+      headerRight: () => <OptionsMenu density={episodeDensity} onDensityChange={setEpisodeDensity} />,
+    });
+  }, [navigation, episodeDensity, setEpisodeDensity]);
 
   const loadEpisodes = async () => {
     try {
@@ -52,15 +67,13 @@ export default function EpisodesScreen() {
   };
 
   const handleEpisodePress = (episode: Episode) => {
-    // Use first_file_id if available, otherwise use episode id
-    const itemId = episode.first_file_id || episode.id;
-    navigation.navigate('Player', {
-      itemId: itemId,
-      title: episode.title,
+    navigation.navigate('EpisodeDetail', {
+      episodeId: episode.id,
     });
   };
 
   const renderEpisodeItem = ({ item, index }: { item: Episode; index: number }) => {
+    const itemWidth = (windowWidth - 48 - (episodeDensity - 1) * 8) / episodeDensity;
     const episodeNum = item.episode || (index + 1);
     const episodeTitle = item.title || `Episode ${episodeNum}`;
     
@@ -89,7 +102,7 @@ export default function EpisodesScreen() {
     
     return (
       <TouchableOpacity
-        style={styles.episodeCard}
+        style={[styles.episodeCard, { width: itemWidth }]}
         onPress={() => handleEpisodePress(item)}
         activeOpacity={0.8}
       >
@@ -154,13 +167,15 @@ export default function EpisodesScreen() {
   return (
     <View style={styles.container}>
       <FlatList
+        key={`grid-${episodeDensity}`}
         data={episodes}
         renderItem={renderEpisodeItem}
         keyExtractor={(item) => item.id}
         contentContainerStyle={styles.listContainer}
         showsVerticalScrollIndicator={false}
-        numColumns={2}
-        columnWrapperStyle={styles.row}
+        numColumns={episodeDensity}
+        columnWrapperStyle={episodeDensity > 1 ? styles.row : undefined}
+        extraData={episodeDensity}
       />
     </View>
   );
@@ -211,9 +226,9 @@ const styles = StyleSheet.create({
   },
   row: {
     justifyContent: 'space-between',
+    marginBottom: 16,
   },
   episodeCard: {
-    width: CARD_WIDTH,
     marginBottom: 16,
     borderRadius: 12,
     overflow: 'hidden',

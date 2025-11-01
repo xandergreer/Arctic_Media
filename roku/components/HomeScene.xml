@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component name="HomeScene" extends="Scene">
+  <script type="text/brightscript" uri="pkg:/source/api.brs" />
+  <script type="text/brightscript" uri="pkg:/source/home.brs" />
+  <children>
+    <!-- Background -->
+    <Rectangle id="background" width="1920" height="1080" color="0x000000FF" />
+    
+    <!-- Header -->
+    <Rectangle id="header" width="1920" height="120" color="0x1a1a1aFF">
+      <Label id="title" translation="[80,40]" text="Arctic Media" width="1600" color="0xFFFFFFFF" font="font:LargeBoldSystemFont" />
+      <Label id="subtitle" translation="[80,90]" text="Home" width="1600" color="0x999999FF" font="font:SmallSystemFont" />
+    </Rectangle>
+    
+    <!-- Content: RowList for Movies and TV Shows -->
+    <RowList id="homeContent" translation="[0,120]" itemSize="[1920,600]" numRows="2" itemSpacing="[0,20]" rowHeights="[600,600]" />
+  </children>
+</component>

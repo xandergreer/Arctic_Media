@@ -99,18 +99,17 @@ export const mediaAPI = {
       // Map backend response fields and convert relative URLs to absolute
       const { serverConfig } = useAuthStore.getState();
       return response.data.map((episode: any) => {
+        // Debug: Log episode title from backend
+        console.log(`Episode ${episode.episode || episode.id} from backend:`, {
+          title: episode.title,
+          episodeNum: episode.episode,
+          air_date: episode.air_date,
+        });
+        
         // Handle episode still URL
         // Still URLs from TMDB are already absolute (https://image.tmdb.org/...)
         // Backend now provides fallback (season/show poster) if episode still is missing
         let stillUrl = episode.still;
-        
-        // Debug: Log what we receive from backend
-        console.log(`Episode ${episode.episode || episode.id} raw still from backend:`, {
-          still: episode.still,
-          stillType: typeof episode.still,
-          stillIsNull: episode.still === null,
-          stillIsUndefined: episode.still === undefined,
-        });
         
         if (stillUrl && typeof stillUrl === 'string' && stillUrl.trim() !== '') {
           // If it's already a full URL (TMDB or other), use it as-is
@@ -137,6 +136,40 @@ export const mediaAPI = {
     } catch (error) {
       console.error('Get episodes error:', error);
       throw new Error('Failed to fetch episodes.');
+    }
+  },
+
+  // Get a single episode by ID
+  async getEpisode(episodeId: string): Promise<any> {
+    try {
+      const api = await createApiInstance();
+      const response = await api.get(`/tv/episode/${episodeId}`);
+      const { serverConfig } = useAuthStore.getState();
+      const episode = response.data;
+      
+      // Convert relative URLs to absolute
+      let stillUrl = episode.still;
+      if (stillUrl && typeof stillUrl === 'string' && !stillUrl.startsWith('http://') && !stillUrl.startsWith('https://')) {
+        stillUrl = stillUrl.startsWith('/') 
+          ? `${serverConfig?.url || ''}${stillUrl}`
+          : `${serverConfig?.url || ''}/${stillUrl}`;
+      }
+      
+      let stillOriginalUrl = episode.still_original;
+      if (stillOriginalUrl && typeof stillOriginalUrl === 'string' && !stillOriginalUrl.startsWith('http://') && !stillOriginalUrl.startsWith('https://')) {
+        stillOriginalUrl = stillOriginalUrl.startsWith('/')
+          ? `${serverConfig?.url || ''}${stillOriginalUrl}`
+          : `${serverConfig?.url || ''}/${stillOriginalUrl}`;
+      }
+      
+      return {
+        ...episode,
+        still: stillUrl,
+        still_original: stillOriginalUrl,
+      };
+    } catch (error) {
+      console.error('Get episode error:', error);
+      throw new Error('Failed to fetch episode.');
     }
   },
 
@@ -270,6 +303,39 @@ export const mediaAPI = {
     } catch (error) {
       console.error('Get recent movies error:', error);
       throw new Error('Failed to fetch recent movies.');
+    }
+  },
+
+  // Get all movies
+  async getAllMovies(): Promise<MediaItem[]> {
+    try {
+      const api = await createApiInstance();
+      const response = await api.get(`/movies?page=1&page_size=1000`);
+      const { serverConfig } = useAuthStore.getState();
+      return (response.data.items || []).map((movie: any) => {
+        const ej = movie.extra_json || {};
+        let posterUrl = ej.poster || movie.poster_url;
+        if (posterUrl && !posterUrl.startsWith('http')) {
+          posterUrl = posterUrl.startsWith('/') 
+            ? `${serverConfig?.url || ''}${posterUrl}`
+            : `${serverConfig?.url || ''}/${posterUrl}`;
+        }
+        let backdropUrl = ej.backdrop || movie.backdrop_url;
+        if (backdropUrl && !backdropUrl.startsWith('http')) {
+          backdropUrl = backdropUrl.startsWith('/')
+            ? `${serverConfig?.url || ''}${backdropUrl}`
+            : `${serverConfig?.url || ''}/${backdropUrl}`;
+        }
+        return {
+          ...movie,
+          poster_url: posterUrl,
+          backdrop_url: backdropUrl,
+          extra_json: ej, // Include full extra_json for metadata
+        };
+      });
+    } catch (error) {
+      console.error('Get all movies error:', error);
+      throw new Error('Failed to fetch movies.');
     }
   },
 

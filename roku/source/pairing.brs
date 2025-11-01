@@ -185,10 +185,16 @@ sub OnPollTimer(event)
   if json.status = "authorized" then
     ' Save tokens
     SaveTokens(json.access_token, json.refresh_token)
-    ' Navigate to home (TODO: implement HomeScene)
+    ' Navigate to home
     m.top.findNode("message").text = "Authorized! Loading..."
     if m.poll_timer <> invalid then m.poll_timer.control = "stop"
-    ' TODO: m.top.setScene("HomeScene")
+    
+    ' Restart app with HomeScene (Roku doesn't support dynamic scene switching easily)
+    ' So we just show success message - user will restart manually
+    print "Authorized! User should restart app to see home content"
+    
+    ' Alternative: Set a flag and have main.brs check it
+    ' For now, simple approach: show success
   else if json.status = "pending" then
     ' Keep waiting
   else
@@ -196,14 +202,6 @@ sub OnPollTimer(event)
     if m.poll_timer <> invalid then m.poll_timer.control = "stop"
   end if
 end sub
-
-function LoadServerUrl() as string
-  ' Load from registry (persistent storage)
-  sec = CreateObject("roRegistrySection", "ArcticMedia")
-  url = sec.Read("server_url")
-  if url = invalid then url = ""
-  return url
-end function
 
 sub SaveServerUrl(url as string)
   sec = CreateObject("roRegistrySection", "ArcticMedia")
@@ -219,13 +217,3 @@ sub SaveTokens(access_token as string, refresh_token as string)
   sec.Flush()
   print "Saved authentication tokens"
 end sub
-
-function LoadTokens() as object
-  sec = CreateObject("roRegistrySection", "ArcticMedia")
-  tokens = {}
-  tokens.access_token = sec.Read("access_token")
-  tokens.refresh_token = sec.Read("refresh_token")
-  if tokens.access_token = invalid then tokens.access_token = ""
-  if tokens.refresh_token = invalid then tokens.refresh_token = ""
-  return tokens
-end function

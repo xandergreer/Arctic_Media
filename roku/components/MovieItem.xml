@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component name="MovieItem" extends="Poster">
+  <script type="text/brightscript">
+    <![CDATA[
+      sub init()
+        m.top.height = 600
+        m.top.width = 400
+        m.top.translation = "[0,0]"
+      end sub
+    ]]>
+  </script>
+</component>

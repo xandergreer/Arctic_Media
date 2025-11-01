@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useLayoutEffect } from 'react';
 import {
   View,
   Text,
@@ -16,9 +16,8 @@ import { RootStackParamList } from '../navigation/AppNavigator';
 import { mediaAPI } from '../api/media';
 import { Season } from '../types';
 import { useAuthStore } from '../store/authStore';
-
-const { width } = Dimensions.get('window');
-const CARD_WIDTH = (width - 48) / 2; // 2 columns with padding
+import OptionsMenu from '../components/OptionsMenu';
+import { usePreferencesStore } from '../store/preferencesStore';
 
 type SeasonsScreenNavigationProp = StackNavigationProp<RootStackParamList, 'Seasons'>;
 type SeasonsScreenRouteProp = RouteProp<RootStackParamList, 'Seasons'>;
@@ -32,10 +31,26 @@ export default function SeasonsScreen() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const { serverConfig } = useAuthStore();
+  const { seasonDensity, setSeasonDensity, loadPreferences } = usePreferencesStore();
+  const [windowWidth, setWindowWidth] = useState(Dimensions.get('window').width);
 
   useEffect(() => {
     loadSeasons();
+    loadPreferences();
   }, [showId]);
+
+  useEffect(() => {
+    const subscription = Dimensions.addEventListener('change', ({ window }) => {
+      setWindowWidth(window.width);
+    });
+    return () => subscription?.remove();
+  }, []);
+
+  useLayoutEffect(() => {
+    navigation.setOptions({
+      headerRight: () => <OptionsMenu density={seasonDensity} onDensityChange={setSeasonDensity} />,
+    });
+  }, [navigation, seasonDensity, setSeasonDensity]);
 
   const loadSeasons = async () => {
     try {
@@ -60,12 +75,13 @@ export default function SeasonsScreen() {
   };
 
   const renderSeasonItem = ({ item }: { item: Season }) => {
+    const itemWidth = (windowWidth - 48 - (seasonDensity - 1) * 8) / seasonDensity;
     // Get poster URL - use season poster, show poster, or placeholder
     const posterUrl = item.poster_url || showPoster || (serverConfig?.url ? `${serverConfig.url}/static/img/placeholder.png` : null);
     
     return (
       <TouchableOpacity
-        style={styles.seasonCard}
+        style={[styles.seasonCard, { width: itemWidth }]}
         onPress={() => handleSeasonPress(item)}
         activeOpacity={0.8}
       >
@@ -119,13 +135,15 @@ export default function SeasonsScreen() {
   return (
     <View style={styles.container}>
       <FlatList
+        key={`grid-${seasonDensity}`}
         data={seasons}
         renderItem={renderSeasonItem}
         keyExtractor={(item) => item.id}
         contentContainerStyle={styles.listContainer}
         showsVerticalScrollIndicator={false}
-        numColumns={2}
-        columnWrapperStyle={styles.row}
+        numColumns={seasonDensity}
+        columnWrapperStyle={seasonDensity > 1 ? styles.row : undefined}
+        extraData={seasonDensity}
       />
     </View>
   );
@@ -176,9 +194,9 @@ const styles = StyleSheet.create({
   },
   row: {
     justifyContent: 'space-between',
+    marginBottom: 16,
   },
   seasonCard: {
-    width: CARD_WIDTH,
     marginBottom: 16,
     borderRadius: 12,
     overflow: 'hidden',

@@ -44,7 +44,13 @@ export interface Episode {
   still?: string;
   air_date?: string;
   episode?: number;
+  season?: number;
+  overview?: string;
+  vote_average?: number;
+  vote_count?: number;
+  still_original?: string;
   first_file_id?: string;
+  file_ids?: string[];
 }
 
 export interface Library {

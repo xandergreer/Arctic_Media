@@ -73,6 +73,10 @@ export default function HomeScreen() {
     });
   };
 
+  const navigateToMovies = () => {
+    navigation.navigate('Movies');
+  };
+
   const navigateToTVShows = () => {
     navigation.navigate('TVShows');
   };
@@ -162,7 +166,7 @@ export default function HomeScreen() {
       <View style={styles.section}>
         <View style={styles.sectionHeader}>
           <Text style={styles.sectionTitle}>Recently Added in Movies</Text>
-          <TouchableOpacity onPress={navigateToTVShows}>
+          <TouchableOpacity onPress={navigateToMovies}>
             <Text style={styles.seeAllText}>See all</Text>
           </TouchableOpacity>
         </View>

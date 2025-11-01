@@ -4,13 +4,16 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { StatusBar } from 'react-native';
 import AppNavigator from './navigation/AppNavigator';
 import { useAuthStore } from './store/authStore';
+import { usePreferencesStore } from './store/preferencesStore';
 
 export default function App() {
   const { checkAuth, isLoading } = useAuthStore();
+  const { loadPreferences } = usePreferencesStore();
 
   useEffect(() => {
     checkAuth();
-  }, [checkAuth]);
+    loadPreferences();
+  }, [checkAuth, loadPreferences]);
 
   if (isLoading) {
     // You can add a loading screen here
