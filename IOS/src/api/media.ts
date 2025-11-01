@@ -99,19 +99,34 @@ export const mediaAPI = {
       // Map backend response fields and convert relative URLs to absolute
       const { serverConfig } = useAuthStore.getState();
       return response.data.map((episode: any) => {
-        // Convert relative still URLs to absolute URLs
-        let stillUrl = episode.still || null;
-        if (stillUrl) {
-          // Handle null/undefined
-          if (typeof stillUrl === 'string' && stillUrl.trim() !== '') {
-            if (!stillUrl.startsWith('http')) {
-              stillUrl = stillUrl.startsWith('/') 
-                ? `${serverConfig?.url || ''}${stillUrl}`
-                : `${serverConfig?.url || ''}/${stillUrl}`;
-            }
+        // Handle episode still URL
+        // Still URLs from TMDB are already absolute (https://image.tmdb.org/...)
+        // Backend now provides fallback (season/show poster) if episode still is missing
+        let stillUrl = episode.still;
+        
+        // Debug: Log what we receive from backend
+        console.log(`Episode ${episode.episode || episode.id} raw still from backend:`, {
+          still: episode.still,
+          stillType: typeof episode.still,
+          stillIsNull: episode.still === null,
+          stillIsUndefined: episode.still === undefined,
+        });
+        
+        if (stillUrl && typeof stillUrl === 'string' && stillUrl.trim() !== '') {
+          // If it's already a full URL (TMDB or other), use it as-is
+          if (stillUrl.startsWith('http://') || stillUrl.startsWith('https://')) {
+            // Already absolute, keep it
+          } else if (stillUrl.startsWith('/')) {
+            // Relative URL starting with / - make it absolute
+            stillUrl = `${serverConfig?.url || ''}${stillUrl}`;
           } else {
-            stillUrl = null;
+            // Relative URL without / - make it absolute
+            stillUrl = `${serverConfig?.url || ''}/${stillUrl}`;
           }
+          console.log(`Episode ${episode.episode || episode.id} processed still URL:`, stillUrl);
+        } else {
+          console.warn(`Episode ${episode.episode || episode.id} has no valid still URL`);
+          stillUrl = undefined;
         }
         
         return {
@@ -128,12 +143,41 @@ export const mediaAPI = {
   // Get all libraries
   async getLibraries(): Promise<Library[]> {
     try {
-      const api = await createApiInstance();
-      const response = await api.get('/libraries');
-      return response.data;
-    } catch (error) {
+      const { serverConfig } = useAuthStore.getState();
+      if (!serverConfig) {
+        throw new Error('Server not configured');
+      }
+      
+      // The libraries router is included without /api prefix in main.py
+      // So the endpoint is /libraries (not /api/libraries)
+      // Get token from store or AsyncStorage
+      const token = useAuthStore.getState().token || await AsyncStorage.getItem('auth_token');
+      
+      if (!token) {
+        throw new Error('Not authenticated - no token available');
+      }
+      
+      // Libraries endpoint - use Bearer token auth
+      const response = await axios.get(`${serverConfig.url}/libraries`, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          Accept: 'application/json',
+        },
+        timeout: 10000,
+      });
+      
+      console.log('Libraries fetched successfully:', response.data?.length || 0, 'libraries');
+      return response.data || [];
+    } catch (error: any) {
       console.error('Get libraries error:', error);
-      throw new Error('Failed to fetch libraries.');
+      if (error.response) {
+        console.error('Libraries API error response:', {
+          status: error.response.status,
+          data: error.response.data,
+          url: error.config?.url,
+        });
+      }
+      return []; // Return empty array instead of throwing
     }
   },
 

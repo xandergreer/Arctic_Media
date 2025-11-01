@@ -21,7 +21,7 @@ export type RootStackParamList = {
   ShowDetail: { showId: string };
   MovieDetail: { movieId: string };
   Seasons: { showId: string; showTitle: string; showPoster?: string };
-  Episodes: { showId: string; season: number; showTitle: string };
+  Episodes: { showId: string; season: number; showTitle: string; showPoster?: string };
   Player: { itemId: string; title: string };
   Settings: undefined;
 };
@@ -91,7 +91,10 @@ export default function AppNavigator() {
           <Stack.Screen
             name="Player"
             component={PlayerScreen}
-            options={{ headerShown: false }}
+            options={{ 
+              headerShown: false,
+              gestureEnabled: false
+            }}
           />
           <Stack.Screen
             name="Settings"

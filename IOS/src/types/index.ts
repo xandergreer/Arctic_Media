@@ -12,6 +12,7 @@ export interface User {
   username: string;
   role: string;
   created_at: string;
+  is_admin?: boolean;
 }
 
 export interface MediaItem {

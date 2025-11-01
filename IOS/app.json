@@ -14,7 +14,20 @@
     ],
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.arcticmedia.app"
+      "bundleIdentifier": "com.arcticmedia.app",
+      "infoPlist": {
+        "UISupportedInterfaceOrientations": [
+          "UIInterfaceOrientationPortrait",
+          "UIInterfaceOrientationLandscapeLeft",
+          "UIInterfaceOrientationLandscapeRight"
+        ],
+        "UISupportedInterfaceOrientations~ipad": [
+          "UIInterfaceOrientationPortrait",
+          "UIInterfaceOrientationPortraitUpsideDown",
+          "UIInterfaceOrientationLandscapeLeft",
+          "UIInterfaceOrientationLandscapeRight"
+        ]
+      }
     },
     "android": {
       "package": "com.arcticmedia.app"
@@ -23,7 +36,13 @@
       "favicon": "./assets/icon.ico"
     },
     "plugins": [
-      "expo-video"
+      "expo-video",
+      [
+        "expo-screen-orientation",
+        {
+          "initialOrientation": "DEFAULT"
+        }
+      ]
     ]
   }
 }

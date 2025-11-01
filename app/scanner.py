@@ -343,6 +343,12 @@ async def scan_tv_library(
         if not episode:
             skipped += 1
             continue
+        
+        # Set season and episode numbers in extra_json for metadata enrichment
+        if not episode.extra_json:
+            episode.extra_json = {}
+        episode.extra_json["season"] = int(season_no)
+        episode.extra_json["episode"] = int(episode_no)
 
         # file
         mf = MediaFile(media_item_id=episode.id, path=os.path.normpath(path))
@@ -658,6 +664,12 @@ def scan_tv_library_sync(
         if not episode:
             skipped += 1
             continue
+        
+        # Set season and episode numbers in extra_json for metadata enrichment
+        if not episode.extra_json:
+            episode.extra_json = {}
+        episode.extra_json["season"] = int(season_no)
+        episode.extra_json["episode"] = int(episode_no)
 
         # file
         mf = MediaFile(media_item_id=episode.id, path=os.path.normpath(path))

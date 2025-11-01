@@ -148,7 +148,7 @@ export default function MovieDetailScreen() {
             <View style={styles.heroMeta}>
               <Text style={styles.title}>
                 {movie.title}
-                {movie.year ? <Text style={styles.year}> ({movie.year})</Text> : null}
+                {movie.year ? <Text style={styles.year}> ({movie.year})</Text> : ''}
               </Text>
               
               {tagline && (
@@ -157,8 +157,8 @@ export default function MovieDetailScreen() {
 
               <View style={styles.metaRow}>
                 <Text style={styles.metaText}>Movie</Text>
-                {releaseDate && <Text style={styles.metaDivider}> · </Text>}
-                {releaseDate && <Text style={styles.metaText}>{releaseDate}</Text>}
+                {releaseDate ? <Text style={styles.metaDivider}> · </Text> : null}
+                {releaseDate ? <Text style={styles.metaText}>{releaseDate}</Text> : null}
               </View>
 
               {overview ? (

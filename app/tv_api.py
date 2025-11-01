@@ -79,6 +79,24 @@ async def list_episodes(
     if not season_item:
         return []
 
+    # Get show item for poster fallback
+    show_item = (await db.execute(
+        select(MediaItem)
+        .where(MediaItem.id == show_id, MediaItem.kind == MediaKind.show)
+    )).scalar_one_or_none()
+    
+    # Get show and season posters for fallback
+    show_poster = None
+    if show_item:
+        show_ej = show_item.extra_json or {}
+        show_poster = show_ej.get("poster") or show_item.poster_url
+    
+    season_ej = season_item.extra_json or {}
+    season_poster = season_ej.get("poster") or season_item.poster_url
+    # If season poster is not available, use show poster as fallback
+    if not season_poster:
+        season_poster = show_poster
+
     eps = (await db.execute(
         select(MediaItem)
         .options(selectinload(MediaItem.files))
@@ -95,21 +113,37 @@ async def list_episodes(
             first_file = e.files[0]
             first_file_id = first_file.id
         
-        # Clean up episode title (remove file extensions)
-        title = e.title or ""
-        if title:
-            # Remove common video file extensions
-            import re
-            title = re.sub(r'\.(mkv|mp4|avi|mov|wmv|flv|webm|m4v)$', '', title, flags=re.IGNORECASE)
-            # Clean up common patterns like "S01E01" at the beginning
-            title = re.sub(r'^S\d+E\d+\s*[-–]\s*', '', title, flags=re.IGNORECASE)
-            title = re.sub(r'^\d+x\d+\s*[-–]\s*', '', title, flags=re.IGNORECASE)
-            title = re.sub(r'^\d+\.\s*', '', title)  # Remove leading episode numbers like "1. "
+        # Get episode title - prefer metadata name, then cleaned title
+        title = ej.get("name")  # TMDB episode name from metadata
+        if not title:
+            # Fallback to cleaning the stored title (filename-based)
+            title = e.title or ""
+            if title:
+                # Remove common video file extensions
+                import re
+                title = re.sub(r'\.(mkv|mp4|avi|mov|wmv|flv|webm|m4v)$', '', title, flags=re.IGNORECASE)
+                # Clean up common patterns like "S01E01" at the beginning
+                title = re.sub(r'^S\d+E\d+\s*[-–]\s*', '', title, flags=re.IGNORECASE)
+                title = re.sub(r'^\d+x\d+\s*[-–]\s*', '', title, flags=re.IGNORECASE)
+                title = re.sub(r'^\d+\.\s*', '', title)  # Remove leading episode numbers like "1. "
+        
+        # Get episode still with fallback to season poster, then show poster
+        episode_still = ej.get("still")
+        # Check if still is missing, None, or empty string
+        if not episode_still or (isinstance(episode_still, str) and not episode_still.strip()):
+            # Use fallback: try season poster first, then show poster
+            episode_still = season_poster if season_poster else show_poster
+        
+        # Debug logging (can be removed later)
+        if not episode_still:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.warning(f"Episode {e.id} has no still, season_poster={bool(season_poster)}, show_poster={bool(show_poster)}")
         
         out.append({
             "id": e.id,
             "title": title,
-            "still": ej.get("still"),
+            "still": episode_still,  # Can be None if no fallback available
             "air_date": ej.get("air_date"),
             "episode": ej.get("episode"),
             "first_file_id": first_file_id,

@@ -346,23 +346,54 @@ async def enrich_library(
             se = dict(it.extra_json or {})
             season_no = se.get("season")
             episode_no = se.get("episode")
+            
+            # Fallback: try to extract season/episode from title if not in extra_json
+            if not (season_no and episode_no):
+                import re
+                # Try to parse "S01E01" or "S1E1" pattern from title
+                title_match = re.search(r'(?i)S(\d{1,2})E(\d{1,3})', it.title or "")
+                if title_match:
+                    season_no = int(title_match.group(1))
+                    episode_no = int(title_match.group(2))
+                    # Save to extra_json for future use
+                    se["season"] = season_no
+                    se["episode"] = episode_no
+                    it.extra_json = se
+            
             if not (season_no and episode_no):
                 skipped += 1
                 continue
 
-            if not tv_id_cache:
-                for show in items:
-                    if show.kind == MediaKind.show and (show.extra_json or {}).get("tmdb_id"):
-                        tv_id_cache[show.id] = show.extra_json["tmdb_id"]
-
+            # Find show via parent relationship (episode -> season -> show)
             show_tmdb_id = None
-            for show_id, s_tmdb in tv_id_cache.items():
-                show = next((x for x in items if x.id == show_id), None)
-                if show and show.title and it.title and normalize_sort(show.title) in normalize_sort(it.title):
-                    show_tmdb_id = s_tmdb
-                    break
+            if it.parent_id:
+                # Find season
+                season_item = next((x for x in items if x.id == it.parent_id and x.kind == MediaKind.season), None)
+                if season_item and season_item.parent_id:
+                    # Find show
+                    show_item = next((x for x in items if x.id == season_item.parent_id and x.kind == MediaKind.show), None)
+                    if show_item:
+                        show_tmdb_id = (show_item.extra_json or {}).get("tmdb_id")
+                        # Cache it for other episodes
+                        if show_item.id not in tv_id_cache:
+                            tv_id_cache[show_item.id] = show_tmdb_id
+            
+            # Fallback: try title matching if parent lookup failed
             if not show_tmdb_id:
-                show_tmdb_id = await _search_tv(api_key, it.title.split("S")[0].strip())
+                if not tv_id_cache:
+                    for show in items:
+                        if show.kind == MediaKind.show and (show.extra_json or {}).get("tmdb_id"):
+                            tv_id_cache[show.id] = show.extra_json["tmdb_id"]
+                
+                for show_id, s_tmdb in tv_id_cache.items():
+                    show = next((x for x in items if x.id == show_id), None)
+                    if show and show.title and it.title and normalize_sort(show.title) in normalize_sort(it.title):
+                        show_tmdb_id = s_tmdb
+                        break
+                
+                # Last resort: search by title
+                if not show_tmdb_id:
+                    show_tmdb_id = await _search_tv(api_key, it.title.split("S")[0].strip())
             if not show_tmdb_id:
                 skipped += 1
                 continue
@@ -371,6 +402,10 @@ async def enrich_library(
             if ep_data:
                 se.update(ep_data)
                 it.extra_json = se
+                # Update episode title with TMDB name if available
+                if ep_data.get("name"):
+                    it.title = ep_data["name"]
+                    it.sort_title = normalize_sort(ep_data["name"])
                 ep_filled += 1
 
         processed += 1
@@ -583,23 +618,54 @@ def enrich_library_sync(
             se = dict(it.extra_json or {})
             season_no = se.get("season")
             episode_no = se.get("episode")
+            
+            # Fallback: try to extract season/episode from title if not in extra_json
+            if not (season_no and episode_no):
+                import re
+                # Try to parse "S01E01" or "S1E1" pattern from title
+                title_match = re.search(r'(?i)S(\d{1,2})E(\d{1,3})', it.title or "")
+                if title_match:
+                    season_no = int(title_match.group(1))
+                    episode_no = int(title_match.group(2))
+                    # Save to extra_json for future use
+                    se["season"] = season_no
+                    se["episode"] = episode_no
+                    it.extra_json = se
+            
             if not (season_no and episode_no):
                 skipped += 1
                 continue
 
-            if not tv_id_cache:
-                for show in items:
-                    if show.kind == MediaKind.show and (show.extra_json or {}).get("tmdb_id"):
-                        tv_id_cache[show.id] = show.extra_json["tmdb_id"]
-
+            # Find show via parent relationship (episode -> season -> show)
             show_tmdb_id = None
-            for show_id, s_tmdb in tv_id_cache.items():
-                show = next((x for x in items if x.id == show_id), None)
-                if show and show.title and it.title and normalize_sort(show.title) in normalize_sort(it.title):
-                    show_tmdb_id = s_tmdb
-                    break
+            if it.parent_id:
+                # Find season
+                season_item = next((x for x in items if x.id == it.parent_id and x.kind == MediaKind.season), None)
+                if season_item and season_item.parent_id:
+                    # Find show
+                    show_item = next((x for x in items if x.id == season_item.parent_id and x.kind == MediaKind.show), None)
+                    if show_item:
+                        show_tmdb_id = (show_item.extra_json or {}).get("tmdb_id")
+                        # Cache it for other episodes
+                        if show_item.id not in tv_id_cache:
+                            tv_id_cache[show_item.id] = show_tmdb_id
+            
+            # Fallback: try title matching if parent lookup failed
             if not show_tmdb_id:
-                show_tmdb_id = _search_tv_sync(api_key, it.title.split("S")[0].strip())
+                if not tv_id_cache:
+                    for show in items:
+                        if show.kind == MediaKind.show and (show.extra_json or {}).get("tmdb_id"):
+                            tv_id_cache[show.id] = show.extra_json["tmdb_id"]
+                
+                for show_id, s_tmdb in tv_id_cache.items():
+                    show = next((x for x in items if x.id == show_id), None)
+                    if show and show.title and it.title and normalize_sort(show.title) in normalize_sort(it.title):
+                        show_tmdb_id = s_tmdb
+                        break
+                
+                # Last resort: search by title
+                if not show_tmdb_id:
+                    show_tmdb_id = _search_tv_sync(api_key, it.title.split("S")[0].strip())
             if not show_tmdb_id:
                 skipped += 1
                 continue
@@ -608,6 +674,10 @@ def enrich_library_sync(
             if ep_data:
                 se.update(ep_data)
                 it.extra_json = se
+                # Update episode title with TMDB name if available
+                if ep_data.get("name"):
+                    it.title = ep_data["name"]
+                    it.sort_title = normalize_sort(ep_data["name"])
                 ep_filled += 1
 
         processed += 1

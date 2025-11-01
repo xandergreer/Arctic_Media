@@ -6,12 +6,14 @@ import {
   TouchableOpacity,
   Alert,
   Dimensions,
+  StatusBar,
 } from 'react-native';
-import { useRoute, RouteProp } from '@react-navigation/native';
+import { useRoute, RouteProp, useFocusEffect } from '@react-navigation/native';
 import { useNavigation } from '@react-navigation/native';
 import { RootStackParamList } from '../navigation/AppNavigator';
 import { mediaAPI } from '../api/media';
 import { VideoView, useVideoPlayer } from 'expo-video';
+import * as ScreenOrientation from 'expo-screen-orientation';
 
 type PlayerScreenRouteProp = RouteProp<RootStackParamList, 'Player'>;
 
@@ -45,6 +47,65 @@ export default function PlayerScreen() {
     setupStreaming();
   }, [itemId]);
 
+  // Lock to landscape when screen is focused
+  useFocusEffect(
+    React.useCallback(() => {
+      let isMounted = true;
+      let orientationModuleAvailable = true;
+      
+      // Lock to landscape when screen comes into focus
+      const lockOrientation = async () => {
+        try {
+          // Check if ScreenOrientation is available
+          if (ScreenOrientation && ScreenOrientation.lockAsync) {
+            console.log('Attempting to lock orientation to landscape...');
+            const result = await ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.LANDSCAPE);
+            if (isMounted) {
+              console.log('Orientation locked successfully:', result);
+            }
+          } else {
+            orientationModuleAvailable = false;
+            console.warn('ScreenOrientation module not available. Using native fullscreen controls for rotation.');
+          }
+        } catch (err: any) {
+          orientationModuleAvailable = false;
+          console.error('Failed to lock orientation:', err);
+          // If it's a module not found error, the native module isn't available
+          if (err?.message?.includes('module') || err?.code === 'MODULE_NOT_FOUND' || err?.message?.includes('not found')) {
+            console.warn('expo-screen-orientation native module not available. Native fullscreen controls will handle rotation.');
+          }
+        }
+      };
+
+      lockOrientation();
+
+      return () => {
+        isMounted = false;
+        // Unlock when screen loses focus (only if module was available)
+        if (orientationModuleAvailable && ScreenOrientation && ScreenOrientation.unlockAsync) {
+          ScreenOrientation.unlockAsync().catch(err => {
+            console.log('Failed to unlock orientation on cleanup:', err);
+          });
+        }
+      };
+    }, [])
+  );
+  
+  // Also lock when player becomes ready
+  useEffect(() => {
+    if (player && !loading && streamingUrl) {
+      const timeout = setTimeout(() => {
+        if (ScreenOrientation && ScreenOrientation.lockAsync) {
+          ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.LANDSCAPE).catch(err => {
+            // Silently fail if already locked or module unavailable
+            console.log('Orientation lock skipped (may not be available in Expo Go)');
+          });
+        }
+      }, 500);
+      return () => clearTimeout(timeout);
+    }
+  }, [player, loading, streamingUrl]);
+
   // Create video player with expo-video
   // Note: useVideoPlayer hook recreates player when source changes
   const player = useVideoPlayer(streamingUrl || '', (player) => {
@@ -56,9 +117,11 @@ export default function PlayerScreen() {
     if (streamingUrl && player && !loading) {
       const timer = setTimeout(() => {
         if (player && !player.playing) {
-          player.play().catch((err) => {
+          try {
+            player.play();
+          } catch (err) {
             console.error('Play error:', err);
-          });
+          }
         }
       }, 800);
       return () => clearTimeout(timer);
@@ -68,6 +131,7 @@ export default function PlayerScreen() {
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
+  const [showControls, setShowControls] = useState(false);
   const controlsTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
 
@@ -154,20 +218,20 @@ export default function PlayerScreen() {
 
   return (
     <View style={styles.container}>
-      <View style={styles.videoContainer}>
-        {streamingUrl && player ? (
-          <VideoView
-            player={player}
-            style={styles.video}
-            contentFit="contain"
-            nativeControls={true}
-            allowsFullscreen={true}
-          />
-        ) : null}
-      </View>
+      <StatusBar hidden={true} />
+      {streamingUrl && player ? (
+        <VideoView
+          player={player}
+          style={styles.video}
+          contentFit="contain"
+          nativeControls={true}
+          allowsFullscreen={true}
+          allowsPictureInPicture={false}
+        />
+      ) : null}
 
-      {/* Back button always visible */}
-      <View style={styles.controls}>
+      {/* Back button overlay */}
+      <View style={styles.backButtonContainer}>
         <TouchableOpacity style={styles.backButton} onPress={handleBackPress}>
           <Text style={styles.backButtonText}>‹ Back</Text>
         </TouchableOpacity>
@@ -217,6 +281,8 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#000000',
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   loadingContainer: {
     flex: 1,
@@ -253,25 +319,21 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '600',
   },
-  videoContainer: {
-    width: width,
-    height: height,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
   video: {
-    width: width,
-    height: height,
-  },
-  controls: {
+    width: Dimensions.get('window').width,
+    height: Dimensions.get('window').height,
     position: 'absolute',
     top: 0,
     left: 0,
     right: 0,
-    padding: 20,
-    paddingTop: 50, // Safe area for status bar
-    flexDirection: 'row',
-    zIndex: 100, // Always on top
+    bottom: 0,
+  },
+  backButtonContainer: {
+    position: 'absolute',
+    top: 50,
+    left: 20,
+    zIndex: 1000,
+    elevation: 1000,
   },
   playbackControlsOverlay: {
     position: 'absolute',
@@ -288,10 +350,12 @@ const styles = StyleSheet.create({
     zIndex: 10,
   },
   backButton: {
-    backgroundColor: 'rgba(0, 0, 0, 0.7)',
+    backgroundColor: 'rgba(0, 0, 0, 0.8)',
     paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: 6,
+    paddingVertical: 10,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.3)',
   },
   backButtonText: {
     color: '#ffffff',

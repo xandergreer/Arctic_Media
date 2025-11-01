@@ -65,20 +65,26 @@ export default function ShowDetailScreen() {
   };
 
   const handleSeasonPress = (season: Season) => {
+    const extraJson = (show as any)?.extra_json || {};
+    const showPoster = show?.poster_url || extraJson.poster;
     navigation.navigate('Episodes', {
       showId,
       season: season.season || 1,
       showTitle: show?.title || 'TV Show',
+      showPoster: showPoster || undefined,
     });
   };
 
   const handlePlayPress = () => {
     if (show && seasons.length > 0) {
+      const extraJson = (show as any)?.extra_json || {};
+      const showPoster = show?.poster_url || extraJson.poster;
       // Navigate to first season's first episode
       navigation.navigate('Episodes', {
         showId,
         season: seasons[0].season || 1,
         showTitle: show.title,
+        showPoster: showPoster || undefined,
       });
     }
   };
@@ -149,13 +155,13 @@ export default function ShowDetailScreen() {
             <View style={styles.heroMeta}>
               <Text style={styles.title}>
                 {show.title}
-                {show.year ? <Text style={styles.year}> ({show.year})</Text> : null}
+                {show.year ? <Text style={styles.year}> ({show.year})</Text> : ''}
               </Text>
               
               <View style={styles.metaRow}>
                 <Text style={styles.metaText}>TV Series</Text>
-                {show.year && <Text style={styles.metaDivider}> · </Text>}
-                {show.year && <Text style={styles.metaText}>{show.year}</Text>}
+                {show.year ? <Text style={styles.metaDivider}> · </Text> : null}
+                {show.year ? <Text style={styles.metaText}>{show.year}</Text> : null}
               </View>
 
               {overview ? (

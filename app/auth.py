@@ -153,7 +153,16 @@ async def me(user=Depends(lambda req=...: get_current_user(req))):
 
 # -------- Dependencies --------
 async def get_current_user(request: Request, db: AsyncSession = Depends(get_db)) -> User:
-    token = request.cookies.get(ACCESS_COOKIE)
+    # Check for Bearer token in Authorization header first (for mobile apps)
+    auth_header = request.headers.get("Authorization", "")
+    token = None
+    if auth_header.startswith("Bearer "):
+        token = auth_header.replace("Bearer ", "", 1).strip()
+    
+    # Fall back to cookie if no Bearer token
+    if not token:
+        token = request.cookies.get(ACCESS_COOKIE)
+    
     if not token:
         raise HTTPException(401, "Not authenticated")
     payload = decode_token(token)

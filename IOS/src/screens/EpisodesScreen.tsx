@@ -15,6 +15,7 @@ import { StackNavigationProp } from '@react-navigation/native';
 import { RootStackParamList } from '../navigation/AppNavigator';
 import { mediaAPI } from '../api/media';
 import { Episode } from '../types';
+import { useAuthStore } from '../store/authStore';
 
 type EpisodesScreenNavigationProp = StackNavigationProp<RootStackParamList, 'Episodes'>;
 type EpisodesScreenRouteProp = RouteProp<RootStackParamList, 'Episodes'>;
@@ -25,7 +26,8 @@ const CARD_WIDTH = (width - 48) / 2; // 2 columns with padding
 export default function EpisodesScreen() {
   const navigation = useNavigation<EpisodesScreenNavigationProp>();
   const route = useRoute<EpisodesScreenRouteProp>();
-  const { showId, season, showTitle } = route.params;
+  const { showId, season, showTitle, showPoster } = route.params;
+  const { serverConfig } = useAuthStore();
 
   const [episodes, setEpisodes] = useState<Episode[]>([]);
   const [loading, setLoading] = useState(true);
@@ -62,10 +64,28 @@ export default function EpisodesScreen() {
     const episodeNum = item.episode || (index + 1);
     const episodeTitle = item.title || `Episode ${episodeNum}`;
     
-    // Debug: Log episode still URL
-    if (item.still) {
-      console.log(`Episode ${episodeNum} still URL:`, item.still);
+    // Get still URL with fallback to show poster
+    let stillUrl = item.still;
+    if (!stillUrl || (typeof stillUrl === 'string' && stillUrl.trim() === '')) {
+      // Use show poster as fallback
+      stillUrl = showPoster;
+      // Convert relative show poster URL to absolute if needed
+      if (stillUrl && !stillUrl.startsWith('http://') && !stillUrl.startsWith('https://')) {
+        if (stillUrl.startsWith('/')) {
+          stillUrl = `${serverConfig?.url || ''}${stillUrl}`;
+        } else if (stillUrl) {
+          stillUrl = `${serverConfig?.url || ''}/${stillUrl}`;
+        }
+      }
     }
+    
+    // Debug: Log episode still URL
+    console.log(`Episode ${episodeNum} (${item.id}):`, {
+      originalStill: item.still,
+      finalStill: stillUrl,
+      showPosterFallback: showPoster,
+      stillType: typeof stillUrl,
+    });
     
     return (
       <TouchableOpacity
@@ -74,13 +94,16 @@ export default function EpisodesScreen() {
         activeOpacity={0.8}
       >
         <View style={styles.episodeImageContainer}>
-          {item.still && item.still.trim() !== '' ? (
+          {stillUrl && typeof stillUrl === 'string' && stillUrl.trim() !== '' ? (
             <Image
-              source={{ uri: item.still }}
+              source={{ uri: stillUrl }}
               style={styles.episodeImage}
               resizeMode="cover"
               onError={(e) => {
-                console.error('Failed to load episode still:', item.still, e.nativeEvent.error);
+                console.error('Failed to load episode still:', stillUrl, e.nativeEvent.error);
+              }}
+              onLoad={() => {
+                console.log('Successfully loaded episode still:', stillUrl);
               }}
             />
           ) : (

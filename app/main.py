@@ -667,7 +667,8 @@ async def admin_update_movie(
                     item.extra_json = se
                     if not body.poster_url and data.get("still"):
                         item.poster_url = data.get("still")
-                    ttl = body.title if body.title is not None else data.get("title")
+                    # For episodes, TMDB returns "name", not "title"
+                    ttl = body.title if body.title is not None else data.get("name") or data.get("title")
                     if ttl and ttl.strip():
                         item.title = ttl.strip()
                         item.sort_title = normalize_sort(item.title)
@@ -827,7 +828,8 @@ async def admin_update_movie(
                     item.extra_json = se
                     if not body.poster_url and data.get("still"):
                         item.poster_url = data.get("still")
-                    ttl = body.title if body.title is not None else data.get("title")
+                    # For episodes, TMDB returns "name", not "title"
+                    ttl = body.title if body.title is not None else data.get("name") or data.get("title")
                     if ttl and ttl.strip():
                         item.title = ttl.strip()
                         item.sort_title = normalize_sort(item.title)
