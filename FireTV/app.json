@@ -1,0 +1,29 @@
+{
+  "expo": {
+    "name": "Arctic Media Fire TV",
+    "slug": "arctic-media-firetv",
+    "version": "1.0.0",
+    "orientation": "landscape",
+    "userInterfaceStyle": "dark",
+    "splash": {
+      "backgroundColor": "#0a0a0a",
+      "resizeMode": "contain"
+    },
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "android": {
+      "package": "com.arcticmedia.firetv"
+    },
+    "plugins": [
+      "expo-video",
+      [
+        "expo-screen-orientation",
+        {
+          "initialOrientation": "LANDSCAPE"
+        }
+      ]
+    ]
+  }
+}
+

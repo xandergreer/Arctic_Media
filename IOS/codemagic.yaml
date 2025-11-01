@@ -1,0 +1,98 @@
+workflows:
+  ios-production:
+    name: iOS Production Build
+    max_build_duration: 120
+    environment:
+      groups:
+        # Add these environment variable groups in Codemagic UI:
+        # - app_store_credentials (Apple ID, App Store API Key, etc.)
+        # - expo_credentials (EXPO_TOKEN if needed)
+      node: 20.11.1
+      xcode: 16.0
+      cocoapods: default
+    scripts:
+      - name: Install dependencies
+        script: |
+          cd IOS
+          npm ci
+      - name: Install EAS CLI
+        script: |
+          npm install -g eas-cli@latest
+      - name: Configure Expo
+        script: |
+          cd IOS
+          # Check if EXPO_TOKEN is set (optional, for private packages)
+          if [ -z "$EXPO_TOKEN" ]; then
+            echo "No EXPO_TOKEN set, using public Expo registry"
+          else
+            echo "EXPO_TOKEN found, using authenticated access"
+          fi
+      - name: Build iOS IPA with EAS
+        script: |
+          cd IOS
+          # Build for production
+          eas build --platform ios \
+            --profile production \
+            --non-interactive \
+            --no-wait
+      - name: Download IPA artifact
+        script: |
+          cd IOS
+          # Get the latest build
+          BUILD_URL=$(eas build:list --platform ios --limit 1 --json | jq -r '.[0].artifacts.buildUrl')
+          if [ "$BUILD_URL" != "null" ] && [ -n "$BUILD_URL" ]; then
+            echo "Downloading IPA from: $BUILD_URL"
+            mkdir -p build
+            curl -L -o build/arctic-media.ipa "$BUILD_URL"
+          else
+            echo "Build may still be in progress. Check EAS dashboard."
+            echo "You can download the IPA from: https://expo.dev"
+            # List builds for manual download
+            eas build:list --platform ios --limit 5
+          fi
+    artifacts:
+      - IOS/build/**/*.ipa
+      - build/**/*.ipa
+      - build/**/*.app
+    publishing:
+      email:
+        recipients:
+          - user@example.com # Update with your email
+        notify:
+          success: true
+          failure: true
+
+  ios-preview:
+    name: iOS Preview Build
+    max_build_duration: 120
+    environment:
+      groups:
+        # Add expo_credentials group if needed
+      node: 20.11.1
+      xcode: 16.0
+      cocoapods: default
+    scripts:
+      - name: Install dependencies
+        script: |
+          cd IOS
+          npm ci
+      - name: Install EAS CLI
+        script: |
+          npm install -g eas-cli@latest
+      - name: Build iOS Preview IPA
+        script: |
+          cd IOS
+          eas build --platform ios \
+            --profile preview \
+            --non-interactive \
+            --no-wait
+    artifacts:
+      - IOS/build/**/*.ipa
+      - build/**/*.ipa
+    publishing:
+      email:
+        recipients:
+          - user@example.com # Update with your email
+        notify:
+          success: true
+          failure: false
