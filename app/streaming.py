@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import asyncio
 import contextlib
 import hashlib
@@ -65,9 +63,41 @@ async def cleanup_hls_jobs() -> None:
             HLS_JOBS.pop(fid, None)
 
 
-# -----------------------------------------------------------------------------
-# Executable discovery
-# -----------------------------------------------------------------------------
+# Windows subprocess helpers
+def _get_windows_startupinfo():
+    """Get Windows STARTUPINFO to hide console window."""
+    if os.name == "nt":
+        startupinfo = subprocess.STARTUPINFO()
+        startupinfo.dwFlags = subprocess.STARTF_USESHOWWINDOW
+        startupinfo.wShowWindow = subprocess.SW_HIDE
+        return startupinfo
+    return None
+
+def _get_windows_creationflags():
+    """Get Windows creation flags (CREATE_NO_WINDOW)."""
+    return 0x08000000 if os.name == "nt" else 0
+
+def _get_subprocess_kwargs():
+    """Get kwargs for subprocess calls to hide windows on Windows."""
+    kwargs = {}
+    if os.name == "nt":
+        kwargs["creationflags"] = _get_windows_creationflags()
+        kwargs["startupinfo"] = _get_windows_startupinfo()
+    return kwargs
+
+
+def _ff_bin_from_appdata(name: str) -> str:
+    """Check for FFmpeg/FFprobe in %APPDATA%\\ArcticMedia\\ffmpeg on Windows."""
+    if os.name == "nt":
+        appdata = os.environ.get("APPDATA") or os.path.expanduser("~")
+        ffmpeg_dir = os.path.join(appdata, "ArcticMedia", "ffmpeg")
+        exe_name = name + ".exe"
+        exe_path = os.path.join(ffmpeg_dir, exe_name)
+        if os.path.exists(exe_path):
+            return exe_path
+    return ""
+
+
 def _first_nonempty(*vals: Optional[str]) -> str:
     for v in vals:
         if v:
@@ -115,6 +145,7 @@ def ffmpeg_exe() -> str:
         os.getenv("FFMPEG_BIN"),
         os.getenv("FFMPEG_PATH"),
         getattr(settings, "FFMPEG_PATH", None),
+        _ff_bin_from_appdata("ffmpeg"),
         _ff_bin_from_bundle("ffmpeg"),
     ) or "ffmpeg"
     # If result is not absolute and we're frozen, verify it exists
@@ -140,6 +171,7 @@ def ffprobe_exe() -> str:
         os.getenv("FFPROBE_BIN"),
         os.getenv("FFPROBE_PATH"),
         getattr(settings, "FFPROBE_PATH", None),
+        _ff_bin_from_appdata("ffprobe"),
         _ff_bin_from_bundle("ffprobe"),
     ) or "ffprobe"
     # If result is not absolute and we're frozen, verify it exists
@@ -202,6 +234,8 @@ async def ffprobe_streams(path: str) -> dict:
             path,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.DEVNULL,
+            creationflags=_get_windows_creationflags(),
+            startupinfo=_get_windows_startupinfo(),
         )
         try:
             stdout, _ = await asyncio.wait_for(
@@ -679,6 +713,8 @@ def _pick_audio_map_for_path(
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
             timeout=5,
+            creationflags=_get_windows_creationflags(),
+            startupinfo=_get_windows_startupinfo(),
         )
         data = json.loads((proc.stdout or b"").decode() or "{}")
         streams = data.get("streams", [])
@@ -795,7 +831,8 @@ async def _pipe_async(cmd: list[str]) -> AsyncIterator[bytes]:
             *cmd,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.DEVNULL,
-            creationflags=(0x00004000 if os.name == "nt" else 0),
+            creationflags=_get_windows_creationflags(),
+            startupinfo=_get_windows_startupinfo(),
         )
     except FileNotFoundError as e:
         import logging
@@ -848,7 +885,9 @@ async def stream_remux(
     caps = browser_caps(request.headers.get("user-agent", ""))
     copy_video = _can_copy_video(info, caps)
     transcode_audio = (info.get("acodec") or "").lower() not in {"aac", "mp3"}
-    a_map = _pick_audio_map_for_path(path, forced_idx=aidx, preferred_lang=alang)
+    a_map = await to_thread.run_sync(
+        lambda: _pick_audio_map_for_path(path, forced_idx=aidx, preferred_lang=alang)
+    )
     cmd = _remux_cmd(path, copy_video, transcode_audio, a_map)
     hdr = {
     "Cache-Control": "no-store",
@@ -894,7 +933,9 @@ async def stream_auto(
         "nocopy", ""
     ).lower() not in {"1", "true", "yes"}
     transcode_audio = (info.get("acodec") or "").lower() not in {"aac", "mp3"}
-    a_map = _pick_audio_map_for_path(path, forced_idx=aidx, preferred_lang=alang)
+    a_map = await to_thread.run_sync(
+        lambda: _pick_audio_map_for_path(path, forced_idx=aidx, preferred_lang=alang)
+    )
     cmd = _remux_cmd(path, copy_video, transcode_audio, a_map)
     hdr = {
         "Cache-Control": "no-store",

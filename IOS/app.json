@@ -1,0 +1,30 @@
+{
+  "expo": {
+    "name": "Arctic Media",
+    "slug": "arctic-media",
+    "version": "1.0.0",
+    "orientation": "default",
+    "userInterfaceStyle": "dark",
+    "splash": {
+      "backgroundColor": "#0a0a0a",
+      "resizeMode": "contain"
+    },
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.arcticmedia.app"
+    },
+    "android": {
+      "package": "com.arcticmedia.app"
+    },
+    "web": {
+      "favicon": "./assets/icon.ico"
+    },
+    "plugins": [
+      "expo-video"
+    ]
+  }
+}
+

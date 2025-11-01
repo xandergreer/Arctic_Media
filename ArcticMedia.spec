@@ -4,7 +4,10 @@ from PyInstaller.utils.hooks import collect_all
 
 datas = [('app\\static', 'app\\static'), ('app\\templates', 'app\\templates')]
 binaries = [('vendor\\ffmpeg\\ffmpeg.exe', '.'), ('vendor\\ffmpeg\\ffprobe.exe', '.')]
-hiddenimports = ['aiosqlite', 'sqlalchemy.dialects.sqlite.aiosqlite', 'jose', 'jose.backends.cryptography_backend', 'pydantic_core._pydantic_core', 'greenlet._greenlet']
+hiddenimports = ['aiosqlite', 'sqlalchemy.dialects.sqlite.aiosqlite', 'jose', 'jose.backends.cryptography_backend', 'pydantic_core._pydantic_core', 'greenlet._greenlet', 'run_server']
+# Explicitly include all app modules
+hiddenimports += ['app.streaming', 'app.scanner', 'app.libraries', 'app.pairing', 'app.main', 'app.auth', 'app.database', 'app.models', 'app.config', 'app.utils', 'app.metadata', 'app.fsbrowse', 'app.admin_users', 'app.tasks_api', 'app.jobs_api', 'app.settings_api', 'app.nav_api', 'app.ui_nav', 'app.tv_api', 'app.streaming_hls']
+hiddenimports += collect_submodules('app')
 hiddenimports += collect_submodules('jose')
 hiddenimports += collect_submodules('cryptography')
 hiddenimports += collect_submodules('sqlalchemy.dialects')

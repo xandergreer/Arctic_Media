@@ -52,6 +52,7 @@ from .settings_api import router as settings_api_router
 from .nav_api import router as nav_router
 from .ui_nav import router as ui_nav_router
 from .tv_api import router as tv_api_router
+from .pairing import router as pairing_router
 from .streaming import router as streaming_router                 # /stream/{id}/file, /auto, etc.
 from .streaming_hls import (
     router as hls_router,                                         # /stream/{item_id}/master.m3u8 + /hls/*
@@ -210,7 +211,7 @@ async def require_login_for_pages(request: Request, call_next):
         if (
             path.startswith("/static/")
             or path.startswith("/auth/")
-            or path in {"/login", "/register", "/favicon.ico"}
+            or path in {"/login", "/register", "/favicon.ico", "/pair"}
             or path.startswith("/docs")
             or path.startswith("/redoc")
             or path == "/openapi.json"
@@ -908,6 +909,7 @@ app.include_router(ui_nav_router)
 app.include_router(tv_api_router)
 
 # Media/streaming APIs
+app.include_router(pairing_router)  # /pair/* endpoints for Roku device pairing
 app.include_router(streaming_router)   # /stream/{file_id}/file, /stream/{file_id}/auto, etc.
 app.include_router(hls_router)         # /stream/{item_id}/master.m3u8 and /stream/{item_id}/hls/*
 app.include_router(jf_stream_router)      # /Videos/{itemId}/master.m3u8 and /Videos/{itemId}/hls/*

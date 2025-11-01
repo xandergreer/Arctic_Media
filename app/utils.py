@@ -22,6 +22,10 @@ except Exception:
     # Fallback for PyInstaller-relative import when package context differs
     from app.config import settings  # type: ignore
 
+def hash_token(token: str) -> str:
+    """Hash a token for storage (similar to password hashing)."""
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
 # =======================
 # Password utilities
 # =======================
