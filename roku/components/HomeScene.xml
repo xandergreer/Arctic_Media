@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component name="HomeScene" extends="Scene">
+  <script type="text/brightscript" uri="pkg:/source/api.brs" />
+  <script type="text/brightscript" uri="pkg:/source/navigation.brs" />
+  <script type="text/brightscript" uri="pkg:/source/home.brs" />
+  <interface>
+    <field id="content" type="node" />
+  </interface>
+  <children>
+    <Poster id="background" uri="pkg:/images/background.png" width="1920" height="1080" />
+    
+    <Label id="title" translation="[80,80]" text="Arctic Media" width="1600" horizAlign="left" color="0xFFFFFFFF" font="font:LargeBoldSystemFont" />
+    
+    <Label id="moviesLabel" translation="[80,200]" text="Movies" width="1600" color="0xFFFFFFFF" font="font:MediumBoldSystemFont" />
+    <RowList id="moviesList" translation="[80,250]" itemSize="[300,450]" itemSpacing="[20,20]" 
+             numRows="1" rowItemSize="[[300,450]]" rowItemSpacing="[[20,0]]" 
+             drawFocusFeedback="true" vertFocusAnimationStyle="floatingFocus" />
+    
+    <Label id="showsLabel" translation="[80,750]" text="TV Shows" width="1600" color="0xFFFFFFFF" font="font:MediumBoldSystemFont" />
+    <RowList id="showsList" translation="[80,800]" itemSize="[300,450]" itemSpacing="[20,20]" 
+             numRows="1" rowItemSize="[[300,450]]" rowItemSpacing="[[20,0]]" 
+             drawFocusFeedback="true" vertFocusAnimationStyle="floatingFocus" />
+  </children>
+</component>
+

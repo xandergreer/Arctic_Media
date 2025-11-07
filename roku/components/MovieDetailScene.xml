@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component name="MovieDetailScene" extends="Scene">
+  <script type="text/brightscript" uri="pkg:/source/api.brs" />
+  <script type="text/brightscript" uri="pkg:/source/navigation.brs" />
+  <script type="text/brightscript" uri="pkg:/source/details.brs" />
+  <interface>
+    <field id="itemId" type="string" />
+    <field id="itemType" type="string" />
+  </interface>
+  <children>
+    <Poster id="background" uri="pkg:/images/background.png" width="1920" height="1080" />
+    
+    <Poster id="poster" translation="[100,150]" width="300" height="450" />
+    
+    <Label id="title" translation="[450,150]" text="" width="1400" color="0xFFFFFFFF" font="font:LargeBoldSystemFont" />
+    <Label id="year" translation="[450,220]" text="" width="1400" color="0xCCCCCCFF" font="font:MediumSystemFont" />
+    <Label id="description" translation="[450,280]" text="" width="1400" height="400" color="0xFFFFFFFF" font="font:SmallSystemFont" wrap="true" />
+    
+    <Button id="playButton" translation="[450,700]" text="Play" width="300" height="80" />
+  </children>
+</component>
+

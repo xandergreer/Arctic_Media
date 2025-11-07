@@ -1,0 +1,93 @@
+{
+  "buildFiles": [
+    "E:\\Arctic_Media\\FireTV\\node_modules\\@react-native-async-storage\\async-storage\\android\\build\\generated\\source\\codegen\\jni\\CMakeLists.txt",
+    "E:\\Arctic_Media\\FireTV\\node_modules\\react-native-gesture-handler\\android\\build\\generated\\source\\codegen\\jni\\CMakeLists.txt",
+    "E:\\Arctic_Media\\FireTV\\node_modules\\react-native-safe-area-context\\android\\src\\main\\jni\\CMakeLists.txt",
+    "E:\\Arctic_Media\\FireTV\\node_modules\\react-native-screens\\android\\src\\main\\jni\\CMakeLists.txt",
+    "E:\\Arctic_Media\\FireTV\\node_modules\\react-native-svg\\android\\src\\main\\jni\\CMakeLists.txt",
+    "E:\\Arctic_Media\\FireTV\\node_modules\\react-native\\ReactAndroid\\cmake-utils\\default-app-setup\\CMakeLists.txt"
+  ],
+  "cleanCommandsComponents": [
+    [
+      "C:\\Users\\thebo\\AppData\\Local\\Android\\Sdk\\cmake\\3.22.1\\bin\\ninja.exe",
+      "-C",
+      "E:\\Arctic_Media\\FireTV\\android\\app\\.cxx\\RelWithDebInfo\\706h43u5\\x86",
+      "clean"
+    ]
+  ],
+  "buildTargetsCommandComponents": [
+    "C:\\Users\\thebo\\AppData\\Local\\Android\\Sdk\\cmake\\3.22.1\\bin\\ninja.exe",
+    "-C",
+    "E:\\Arctic_Media\\FireTV\\android\\app\\.cxx\\RelWithDebInfo\\706h43u5\\x86",
+    "{LIST_OF_TARGETS_TO_BUILD}"
+  ],
+  "libraries": {
+    "appmodules::@6890427a1f51a3e7e1df": {
+      "toolchain": "toolchain",
+      "abi": "x86",
+      "artifactName": "appmodules",
+      "output": "E:\\Arctic_Media\\FireTV\\android\\app\\build\\intermediates\\cxx\\RelWithDebInfo\\706h43u5\\obj\\x86\\libappmodules.so",
+      "runtimeFiles": [
+        "E:\\Arctic_Media\\FireTV\\android\\app\\build\\intermediates\\cxx\\RelWithDebInfo\\706h43u5\\obj\\x86\\libreact_codegen_safeareacontext.so",
+        "E:\\Arctic_Media\\FireTV\\android\\app\\build\\intermediates\\cxx\\RelWithDebInfo\\706h43u5\\obj\\x86\\libreact_codegen_rnscreens.so",
+        "E:\\Arctic_Media\\FireTV\\android\\app\\build\\intermediates\\cxx\\RelWithDebInfo\\706h43u5\\obj\\x86\\libreact_codegen_rnsvg.so",
+        "C:\\Users\\thebo\\.gradle\\caches\\8.14.3\\transforms\\e2ac816cc322e0622c8e36eeb217f096\\transformed\\fbjni-0.7.0\\prefab\\modules\\fbjni\\libs\\android.x86\\libfbjni.so",
+        "C:\\Users\\thebo\\.gradle\\caches\\8.14.3\\transforms\\8dd563c36fdc8ed25724b885e60d3aa7\\transformed\\react-android-0.81.5-release\\prefab\\modules\\jsi\\libs\\android.x86\\libjsi.so",
+        "C:\\Users\\thebo\\.gradle\\caches\\8.14.3\\transforms\\8dd563c36fdc8ed25724b885e60d3aa7\\transformed\\react-android-0.81.5-release\\prefab\\modules\\reactnative\\libs\\android.x86\\libreactnative.so"
+      ]
+    },
+    "react_codegen_rnasyncstorage::@1596841e19ec5b9eeffe": {
+      "toolchain": "toolchain",
+      "abi": "x86",
+      "artifactName": "react_codegen_rnasyncstorage"
+    },
+    "react_codegen_rngesturehandler_codegen::@39f233abcd2c728bc6ec": {
+      "toolchain": "toolchain",
+      "abi": "x86",
+      "artifactName": "react_codegen_rngesturehandler_codegen"
+    },
+    "react_codegen_rnscreens::@25bcbd507e98d3a854ad": {
+      "toolchain": "toolchain",
+      "abi": "x86",
+      "artifactName": "react_codegen_rnscreens",
+      "output": "E:\\Arctic_Media\\FireTV\\android\\app\\build\\intermediates\\cxx\\RelWithDebInfo\\706h43u5\\obj\\x86\\libreact_codegen_rnscreens.so",
+      "runtimeFiles": [
+        "C:\\Users\\thebo\\.gradle\\caches\\8.14.3\\transforms\\8dd563c36fdc8ed25724b885e60d3aa7\\transformed\\react-android-0.81.5-release\\prefab\\modules\\reactnative\\libs\\android.x86\\libreactnative.so",
+        "C:\\Users\\thebo\\.gradle\\caches\\8.14.3\\transforms\\8dd563c36fdc8ed25724b885e60d3aa7\\transformed\\react-android-0.81.5-release\\prefab\\modules\\jsi\\libs\\android.x86\\libjsi.so",
+        "C:\\Users\\thebo\\.gradle\\caches\\8.14.3\\transforms\\e2ac816cc322e0622c8e36eeb217f096\\transformed\\fbjni-0.7.0\\prefab\\modules\\fbjni\\libs\\android.x86\\libfbjni.so"
+      ]
+    },
+    "react_codegen_rnsvg::@4f40eb209d0c0b4a3b65": {
+      "toolchain": "toolchain",
+      "abi": "x86",
+      "artifactName": "react_codegen_rnsvg",
+      "output": "E:\\Arctic_Media\\FireTV\\android\\app\\build\\intermediates\\cxx\\RelWithDebInfo\\706h43u5\\obj\\x86\\libreact_codegen_rnsvg.so",
+      "runtimeFiles": [
+        "C:\\Users\\thebo\\.gradle\\caches\\8.14.3\\transforms\\8dd563c36fdc8ed25724b885e60d3aa7\\transformed\\react-android-0.81.5-release\\prefab\\modules\\reactnative\\libs\\android.x86\\libreactnative.so",
+        "C:\\Users\\thebo\\.gradle\\caches\\8.14.3\\transforms\\8dd563c36fdc8ed25724b885e60d3aa7\\transformed\\react-android-0.81.5-release\\prefab\\modules\\jsi\\libs\\android.x86\\libjsi.so",
+        "C:\\Users\\thebo\\.gradle\\caches\\8.14.3\\transforms\\e2ac816cc322e0622c8e36eeb217f096\\transformed\\fbjni-0.7.0\\prefab\\modules\\fbjni\\libs\\android.x86\\libfbjni.so"
+      ]
+    },
+    "react_codegen_safeareacontext::@7984cd80db47aa7b952a": {
+      "toolchain": "toolchain",
+      "abi": "x86",
+      "artifactName": "react_codegen_safeareacontext",
+      "output": "E:\\Arctic_Media\\FireTV\\android\\app\\build\\intermediates\\cxx\\RelWithDebInfo\\706h43u5\\obj\\x86\\libreact_codegen_safeareacontext.so",
+      "runtimeFiles": [
+        "C:\\Users\\thebo\\.gradle\\caches\\8.14.3\\transforms\\e2ac816cc322e0622c8e36eeb217f096\\transformed\\fbjni-0.7.0\\prefab\\modules\\fbjni\\libs\\android.x86\\libfbjni.so",
+        "C:\\Users\\thebo\\.gradle\\caches\\8.14.3\\transforms\\8dd563c36fdc8ed25724b885e60d3aa7\\transformed\\react-android-0.81.5-release\\prefab\\modules\\jsi\\libs\\android.x86\\libjsi.so",
+        "C:\\Users\\thebo\\.gradle\\caches\\8.14.3\\transforms\\8dd563c36fdc8ed25724b885e60d3aa7\\transformed\\react-android-0.81.5-release\\prefab\\modules\\reactnative\\libs\\android.x86\\libreactnative.so"
+      ]
+    }
+  },
+  "toolchains": {
+    "toolchain": {
+      "cCompilerExecutable": "C:\\Users\\thebo\\AppData\\Local\\Android\\Sdk\\ndk\\27.1.12297006\\toolchains\\llvm\\prebuilt\\windows-x86_64\\bin\\clang.exe",
+      "cppCompilerExecutable": "C:\\Users\\thebo\\AppData\\Local\\Android\\Sdk\\ndk\\27.1.12297006\\toolchains\\llvm\\prebuilt\\windows-x86_64\\bin\\clang++.exe"
+    }
+  },
+  "cFileExtensions": [],
+  "cppFileExtensions": [
+    "cpp"
+  ]
+}

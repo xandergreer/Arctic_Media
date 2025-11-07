@@ -1,10 +1,13 @@
-function HttpJson(url as string, method as string, body = invalid as dynamic) as object
+function HttpJson(url as string, method as string, body = invalid as dynamic, token = invalid as string) as object
   req = CreateObject("roUrlTransfer")
   req.SetUrl(url)
   req.setCertificatesFile("common:/certs/ca-bundle.crt")
   req.InitClientCertificates()
   req.AddHeader("Accept", "application/json")
-  req.SetTimeout(10)  ' 10 second timeout
+  if token <> invalid and token <> "" then
+    req.AddHeader("Authorization", "Bearer " + token)
+  end if
+  req.SetTimeout(15)  ' 15 second timeout
   
   json_str = ""
   if body <> invalid and type(body) = "roAssociativeArray" then
@@ -54,4 +57,55 @@ function FormatJson(obj as dynamic) as string
     return "{" + result + "}"
   end if
   return "{}"
+end function
+
+function GetServerUrl() as string
+  sec = CreateObject("roRegistrySection", "ArcticMedia")
+  url = sec.Read("server_url")
+  if url = invalid then url = ""
+  return url
+end function
+
+function GetAuthToken() as string
+  sec = CreateObject("roRegistrySection", "ArcticMedia")
+  token = sec.Read("access_token")
+  if token = invalid then token = ""
+  return token
+end function
+
+function ApiGetMovies(serverUrl as string, token as string, page = 1 as integer, pageSize = 50 as integer) as object
+  url = serverUrl + "/api/movies?page=" + page.ToStr() + "&page_size=" + pageSize.ToStr()
+  return HttpJson(url, "GET", invalid, token)
+end function
+
+function ApiGetTVShows(serverUrl as string, token as string, page = 1 as integer, pageSize = 50 as integer) as object
+  url = serverUrl + "/api/tv?page=" + page.ToStr() + "&page_size=" + pageSize.ToStr()
+  return HttpJson(url, "GET", invalid, token)
+end function
+
+function ApiGetSeasons(serverUrl as string, token as string, showId as string) as object
+  url = serverUrl + "/api/tv/seasons?show_id=" + showId
+  return HttpJson(url, "GET", invalid, token)
+end function
+
+function ApiGetEpisodes(serverUrl as string, token as string, showId as string, season as integer) as object
+  url = serverUrl + "/api/tv/episodes?show_id=" + showId + "&season=" + season.ToStr()
+  return HttpJson(url, "GET", invalid, token)
+end function
+
+function ApiGetMediaFiles(serverUrl as string, token as string, mediaId as string) as object
+  url = serverUrl + "/api/media/" + mediaId + "/files"
+  return HttpJson(url, "GET", invalid, token)
+end function
+
+function GetStreamingUrl(serverUrl as string, itemId as string, token as string) as string
+  ' Return HLS master playlist URL for streaming
+  return serverUrl + "/stream/" + itemId + "/master.m3u8?container=fmp4&token=" + token
+end function
+
+function GetPosterUrl(serverUrl as string, posterPath as string) as string
+  if posterPath = invalid or posterPath = "" then return ""
+  if Left(posterPath, 4) = "http" then return posterPath
+  if Left(posterPath, 1) = "/" then return serverUrl + posterPath
+  return serverUrl + "/" + posterPath
 end function

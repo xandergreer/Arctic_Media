@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <component name="PairingScene" extends="Scene">
   <script type="text/brightscript" uri="pkg:/source/api.brs" />
+  <script type="text/brightscript" uri="pkg:/source/navigation.brs" />
   <script type="text/brightscript" uri="pkg:/source/pairing.brs" />
   <children>
     <Rectangle id="background" width="1920" height="1080" color="0x000000FF" />

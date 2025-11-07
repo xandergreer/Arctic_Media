@@ -107,9 +107,14 @@ app.state.templates = templates
 app.add_middleware(SessionMiddleware, secret_key=settings.SECRET_KEY)
 # Compress responses > ~1KB (helps over WAN/SSL)
 app.add_middleware(GZipMiddleware, minimum_size=1024)
+# Configure CORS - allow origins from settings or all if configured
+cors_origins = []
+if settings.ALLOW_ORIGINS:
+    cors_origins = [origin.strip() for origin in settings.ALLOW_ORIGINS.split(",") if origin.strip()]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[],                # keep same-origin; set if you need remote UI
+    allow_origins=cors_origins if cors_origins else ["*"],  # Allow all if not specified (for domain setup)
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -398,7 +403,9 @@ async def admin_settings_page(
 
 @app.get("/login", response_class=HTMLResponse)
 async def login_page(request: Request):
-    return templates.TemplateResponse("login.html", {"request": request, "hide_chrome": True})
+    # Get return_url from query params to pass to template
+    return_url = request.query_params.get("return_url", "/home")
+    return templates.TemplateResponse("login.html", {"request": request, "hide_chrome": True, "return_url": return_url})
 
 @app.get("/register", response_class=HTMLResponse)
 async def register_page(request: Request):
@@ -667,7 +674,8 @@ async def admin_update_movie(
                     item.extra_json = se
                     if not body.poster_url and data.get("still"):
                         item.poster_url = data.get("still")
-                    ttl = body.title if body.title is not None else data.get("title")
+                    # For episodes, TMDB returns "name", not "title"
+                    ttl = body.title if body.title is not None else data.get("name") or data.get("title")
                     if ttl and ttl.strip():
                         item.title = ttl.strip()
                         item.sort_title = normalize_sort(item.title)
@@ -827,7 +835,8 @@ async def admin_update_movie(
                     item.extra_json = se
                     if not body.poster_url and data.get("still"):
                         item.poster_url = data.get("still")
-                    ttl = body.title if body.title is not None else data.get("title")
+                    # For episodes, TMDB returns "name", not "title"
+                    ttl = body.title if body.title is not None else data.get("name") or data.get("title")
                     if ttl and ttl.strip():
                         item.title = ttl.strip()
                         item.sort_title = normalize_sort(item.title)

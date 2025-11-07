@@ -142,20 +142,21 @@ async def logout(request: Request):
     resp.delete_cookie(ACCESS_COOKIE, path="/")
     return resp
 
-@router.get("/me")
-async def me(user=Depends(lambda req=...: get_current_user(req))):
-    return {
-        "id": user.id,
-        "username": user.username,
-        "email": getattr(user, "email", None),
-        "is_admin": getattr(user, "is_admin", True if not hasattr(user, "is_admin") else bool(user.is_admin)),
-    }
-
 # -------- Dependencies --------
 async def get_current_user(request: Request, db: AsyncSession = Depends(get_db)) -> User:
-    token = request.cookies.get(ACCESS_COOKIE)
+    # Check for Bearer token in Authorization header first (for mobile/apps)
+    auth_header = request.headers.get("Authorization", "")
+    token = None
+    if auth_header.startswith("Bearer "):
+        token = auth_header.replace("Bearer ", "", 1).strip()
+    
+    # Fall back to cookie if no Bearer token
+    if not token:
+        token = request.cookies.get(ACCESS_COOKIE)
+    
     if not token:
         raise HTTPException(401, "Not authenticated")
+    
     payload = decode_token(token)
     if not payload or payload.get("typ") != "access":
         raise HTTPException(401, "Invalid token")
@@ -166,6 +167,15 @@ async def get_current_user(request: Request, db: AsyncSession = Depends(get_db))
     if not user:
         raise HTTPException(401, "User not found")
     return user
+
+@router.get("/me")
+async def me(user: User = Depends(get_current_user)):
+    return {
+        "id": user.id,
+        "username": user.username,
+        "email": getattr(user, "email", None),
+        "is_admin": getattr(user, "is_admin", True if not hasattr(user, "is_admin") else bool(user.is_admin)),
+    }
 
 async def require_admin(user: User = Depends(get_current_user)) -> User:
     # If the model has no is_admin flag, allow (single-user desktop default).

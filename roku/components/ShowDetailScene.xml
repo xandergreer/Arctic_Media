@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component name="ShowDetailScene" extends="MovieDetailScene">
+  <script type="text/brightscript" uri="pkg:/source/api.brs" />
+  <script type="text/brightscript" uri="pkg:/source/navigation.brs" />
+  <script type="text/brightscript" uri="pkg:/source/details.brs" />
+</component>
+

@@ -1,0 +1,8 @@
+title=Arctic Media
+major_version=1
+minor_version=0
+build_version=001
+supports_rtsp=true
+supports_input_launch_param=true
+ui_resolutions=HD
+

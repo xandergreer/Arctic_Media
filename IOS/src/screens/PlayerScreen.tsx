@@ -113,7 +113,8 @@ export default function PlayerScreen() {
   };
 
   const handleVideoTap = () => {
-    setShowControls(!showControls);
+    // Video controls are handled natively by expo-video
+    // This handler is kept for potential future custom controls
   };
 
   const handleSeek = (position: number) => {

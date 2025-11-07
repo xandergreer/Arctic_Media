@@ -1,0 +1,14 @@
+# Tizen Studio
+.tproject
+.project
+.settings/
+build/
+.wgt
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+

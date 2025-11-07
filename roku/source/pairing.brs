@@ -185,10 +185,15 @@ sub OnPollTimer(event)
   if json.status = "authorized" then
     ' Save tokens
     SaveTokens(json.access_token, json.refresh_token)
-    ' Navigate to home (TODO: implement HomeScene)
+    ' Navigate to home
     m.top.findNode("message").text = "Authorized! Loading..."
     if m.poll_timer <> invalid then m.poll_timer.control = "stop"
-    ' TODO: m.top.setScene("HomeScene")
+    ' Signal scene change to main
+    globalNode = m.top.getScene().getGlobalNode()
+    if globalNode <> invalid then
+      globalNode.addFields({ nextScene: "HomeScene", sceneData: invalid })
+      globalNode.setField("sceneChange", "HomeScene")
+    end if
   else if json.status = "pending" then
     ' Keep waiting
   else

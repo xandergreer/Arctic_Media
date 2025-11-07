@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component name="SeasonsScene" extends="Scene">
+  <script type="text/brightscript" uri="pkg:/source/api.brs" />
+  <script type="text/brightscript" uri="pkg:/source/navigation.brs" />
+  <script type="text/brightscript" uri="pkg:/source/seasons.brs" />
+  <children>
+    <Label id="title" translation="[80,80]" text="Select Season" width="1600" color="0xFFFFFFFF" font="font:LargeBoldSystemFont" />
+    <GridView id="seasonsGrid" translation="[80,150]" itemSize="[300,450]" itemSpacing="[20,20]" 
+              numRows="4" numColumns="5" rowItemSize="[[300,450]]" rowItemSpacing="[[20,20]]" 
+              drawFocusFeedback="true" vertFocusAnimationStyle="floatingFocus" />
+  </children>
+</component>
+

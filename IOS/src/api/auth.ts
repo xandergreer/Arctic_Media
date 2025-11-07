@@ -1,4 +1,5 @@
 import axios from 'axios';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { LoginCredentials, User, ServerConfig } from '../types';
 
 // Create axios instance with dynamic configuration
@@ -9,8 +10,8 @@ const createApiInstance = (serverConfig: ServerConfig) => {
   });
 
   // Add request interceptor to include auth token
-  api.interceptors.request.use((config) => {
-    const token = localStorage.getItem('auth_token');
+  api.interceptors.request.use(async (config) => {
+    const token = await AsyncStorage.getItem('auth_token');
     if (token) {
       config.headers.Authorization = `Bearer ${token}`;
     }
@@ -29,7 +30,7 @@ export const authAPI = {
 
       // Store token for future requests
       if (token) {
-        localStorage.setItem('auth_token', token);
+        await AsyncStorage.setItem('auth_token', token);
       }
 
       return user;
@@ -47,7 +48,7 @@ export const authAPI = {
       console.error('Logout error:', error);
     } finally {
       // Remove token regardless of API call success
-      localStorage.removeItem('auth_token');
+      await AsyncStorage.removeItem('auth_token');
     }
   },
 
