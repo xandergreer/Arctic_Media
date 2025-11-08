@@ -43,7 +43,12 @@
           "initialOrientation": "DEFAULT"
         }
       ]
-    ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "20b128a5-8b4e-43f9-ab62-b69e1d2c717d"
+      }
+    },
+    "owner": "arctic1720"
   }
 }
-

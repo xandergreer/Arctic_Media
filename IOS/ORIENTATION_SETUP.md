@@ -89,3 +89,4 @@ Your `app.json` is already configured correctly:
 
 The code will automatically lock to landscape once you have a development build installed.
 
+

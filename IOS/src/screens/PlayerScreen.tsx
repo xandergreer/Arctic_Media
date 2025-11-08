@@ -1,10 +1,11 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
   Text,
   StyleSheet,
   TouchableOpacity,
-  StatusBar,
+  Alert,
+  Dimensions,
 } from 'react-native';
 import { useRoute, RouteProp } from '@react-navigation/native';
 import { useNavigation } from '@react-navigation/native';
@@ -13,6 +14,8 @@ import { mediaAPI } from '../api/media';
 import { VideoView, useVideoPlayer } from 'expo-video';
 
 type PlayerScreenRouteProp = RouteProp<RootStackParamList, 'Player'>;
+
+const { width, height } = Dimensions.get('window');
 
 export default function PlayerScreen() {
   const route = useRoute<PlayerScreenRouteProp>();
@@ -42,10 +45,6 @@ export default function PlayerScreen() {
     setupStreaming();
   }, [itemId]);
 
-  // Note: We don't manually lock orientation anymore
-  // The native controls handle fullscreen rotation automatically
-  // Manual locking was causing conflicts with playback controls
-
   // Create video player with expo-video
   // Note: useVideoPlayer hook recreates player when source changes
   const player = useVideoPlayer(streamingUrl || '', (player) => {
@@ -57,19 +56,71 @@ export default function PlayerScreen() {
     if (streamingUrl && player && !loading) {
       const timer = setTimeout(() => {
         if (player && !player.playing) {
-          try {
-            player.play();
-          } catch (err) {
+          player.play().catch((err) => {
             console.error('Play error:', err);
-          }
+          });
         }
       }, 800);
       return () => clearTimeout(timer);
     }
   }, [streamingUrl, player, loading]);
 
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [currentTime, setCurrentTime] = useState(0);
+  const [duration, setDuration] = useState(0);
+  const controlsTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+
+  // Track player status
+  useEffect(() => {
+    if (!player) return;
+
+    const updateStatus = () => {
+      setIsPlaying(player.playing);
+      setCurrentTime(player.currentTime / 1000); // Convert to seconds
+      setDuration(player.duration / 1000); // Convert to seconds
+    };
+
+    const subscription = player.addListener('statusChange', () => {
+      updateStatus();
+    });
+
+    updateStatus(); // Initial update
+
+    return () => {
+      subscription?.remove();
+    };
+  }, [player]);
+
+  const togglePlayPause = () => {
+    if (player) {
+      if (player.playing) {
+        player.pause();
+      } else {
+        player.play();
+      }
+    }
+  };
+
+  const formatTime = (seconds: number) => {
+    const mins = Math.floor(seconds / 60);
+    const secs = Math.floor(seconds % 60);
+    return `${mins}:${secs.toString().padStart(2, '0')}`;
+  };
+
   const handleBackPress = () => {
     navigation.goBack();
+  };
+
+  const handleVideoTap = () => {
+    // Video controls are handled natively by expo-video
+    // This handler is kept for potential future custom controls
+  };
+
+  const handleSeek = (position: number) => {
+    if (player) {
+      player.currentTime = position * 1000; // Convert to milliseconds
+    }
   };
 
   if (loading) {
@@ -104,24 +155,61 @@ export default function PlayerScreen() {
 
   return (
     <View style={styles.container}>
-      <StatusBar hidden={true} />
-      {streamingUrl && player ? (
-        <VideoView
-          player={player}
-          style={styles.video}
-          contentFit="contain"
-          nativeControls={true}
-          allowsFullscreen={true}
-          allowsPictureInPicture={false}
-        />
-      ) : null}
+      <View style={styles.videoContainer}>
+        {streamingUrl && player ? (
+          <VideoView
+            player={player}
+            style={styles.video}
+            contentFit="contain"
+            nativeControls={true}
+            allowsFullscreen={true}
+          />
+        ) : null}
+      </View>
 
-      {/* Back button overlay - with pointer events disabled on container to avoid blocking native controls */}
-      <View style={styles.backButtonContainer} pointerEvents="box-none">
+      {/* Back button always visible */}
+      <View style={styles.controls}>
         <TouchableOpacity style={styles.backButton} onPress={handleBackPress}>
           <Text style={styles.backButtonText}>‹ Back</Text>
         </TouchableOpacity>
       </View>
+
+      {/* Custom controls - not needed when using native controls */}
+      {false && (
+        <>
+          <View style={styles.playbackControlsOverlay}>
+            <TouchableOpacity style={styles.playButton} onPress={togglePlayPause}>
+              <Text style={styles.playButtonText}>
+                {isPlaying ? '⏸' : '▶'}
+              </Text>
+            </TouchableOpacity>
+          </View>
+
+          <View style={styles.bottomControls}>
+            <View style={styles.titleContainer}>
+              <Text style={styles.titleText}>{title}</Text>
+            </View>
+            
+            <View style={styles.progressContainer}>
+              <Text style={styles.timeText}>
+                {formatTime(currentTime)} / {formatTime(duration)}
+              </Text>
+              {duration > 0 && (
+                <View style={styles.seekBarContainer}>
+                  <View style={styles.seekBarBackground}>
+                    <View 
+                      style={[
+                        styles.seekBarProgress, 
+                        { width: `${(currentTime / duration) * 100}%` }
+                      ]} 
+                    />
+                  </View>
+                </View>
+              )}
+            </View>
+          </View>
+        </>
+      )}
     </View>
   );
 }
@@ -130,8 +218,6 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#000000',
-    justifyContent: 'center',
-    alignItems: 'center',
   },
   loadingContainer: {
     flex: 1,
@@ -168,33 +254,110 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '600',
   },
+  videoContainer: {
+    width: width,
+    height: height,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
   video: {
+    width: width,
+    height: height,
+  },
+  controls: {
     position: 'absolute',
     top: 0,
     left: 0,
     right: 0,
-    bottom: 0,
-    width: '100%',
-    height: '100%',
+    padding: 20,
+    paddingTop: 50, // Safe area for status bar
+    flexDirection: 'row',
+    zIndex: 100, // Always on top
   },
-  backButtonContainer: {
+  playbackControlsOverlay: {
     position: 'absolute',
-    top: 50,
-    left: 20,
-    zIndex: 1, // Behind native video controls
-    elevation: 1,
+    top: '50%',
+    left: '50%',
+    transform: [{ translateX: -30 }, { translateY: -30 }],
+    zIndex: 10,
+  },
+  bottomControls: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    zIndex: 10,
   },
   backButton: {
-    backgroundColor: 'rgba(0, 0, 0, 0.8)',
+    backgroundColor: 'rgba(0, 0, 0, 0.7)',
     paddingHorizontal: 16,
-    paddingVertical: 10,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.3)',
+    paddingVertical: 8,
+    borderRadius: 6,
   },
   backButtonText: {
     color: '#ffffff',
     fontSize: 16,
     fontWeight: '600',
+  },
+  playbackControls: {
+    flex: 1,
+    alignItems: 'center',
+  },
+  playButton: {
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    backgroundColor: 'rgba(0, 0, 0, 0.7)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  playButtonText: {
+    fontSize: 24,
+    color: '#ffffff',
+  },
+  progressContainer: {
+    padding: 20,
+    alignItems: 'center',
+    width: '100%',
+  },
+  timeText: {
+    color: '#ffffff',
+    fontSize: 16,
+    backgroundColor: 'rgba(0, 0, 0, 0.7)',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 4,
+    marginBottom: 12,
+  },
+  seekBarContainer: {
+    width: '100%',
+    paddingHorizontal: 20,
+  },
+  seekBarBackground: {
+    width: '100%',
+    height: 4,
+    backgroundColor: 'rgba(255, 255, 255, 0.3)',
+    borderRadius: 2,
+    overflow: 'hidden',
+  },
+  seekBarProgress: {
+    height: '100%',
+    backgroundColor: '#007AFF',
+    borderRadius: 2,
+  },
+  titleContainer: {
+    paddingHorizontal: 20,
+    paddingTop: 20,
+    paddingBottom: 10,
+  },
+  titleText: {
+    color: '#ffffff',
+    fontSize: 18,
+    fontWeight: 'bold',
+    textAlign: 'center',
+    backgroundColor: 'rgba(0, 0, 0, 0.7)',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 6,
   },
 });
