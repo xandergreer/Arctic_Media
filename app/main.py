@@ -63,9 +63,28 @@ from .streaming_hls import (
 from .models import Library, MediaItem, MediaKind, User, MediaFile
 from .metadata import _movie_detail_pack, _search_movie, _tv_detail_pack, _search_tv, _episode_detail_pack
 from .scheduler import start_scheduler
+from .dashboard import router as dashboard_router
+from .media_api import router as media_api_router
 
 # ── App setup ─────────────────────────────────────────────────────────────────
 app = FastAPI(title="Arctic Media", version="2.0.0")
+
+app.include_router(auth_router)
+app.include_router(libraries_router)
+app.include_router(fs_router)
+app.include_router(admin_users_router)
+app.include_router(tasks_api_router)
+app.include_router(jobs_router)
+app.include_router(settings_api_router)
+app.include_router(nav_router)
+app.include_router(ui_nav_router)
+app.include_router(tv_api_router)
+app.include_router(pairing_router)
+app.include_router(streaming_router)
+app.include_router(hls_router)
+app.include_router(jf_stream_router)
+app.include_router(dashboard_router)
+app.include_router(media_api_router)
 
 # ── Static & templates ────────────────────────────────────────────────────────
 def _resolve_resource_dirs():
@@ -261,6 +280,7 @@ async def startup_event():
     except Exception:
         pass
     await init_db()
+    print("--- ARCTIC MEDIA BACKEND V13 ---")
     # Load transcoder settings and set ffmpeg overrides in env
     try:
         from sqlalchemy import select as _sa_select

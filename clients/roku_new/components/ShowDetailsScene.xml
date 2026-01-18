@@ -1,0 +1,98 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<component name="ShowDetailsScene" extends="Group">
+    <script type="text/brightscript" uri="pkg:/source/api.brs" />
+    <interface>
+        <field id="show_id" type="string" />
+        <field id="server_url" type="string" />
+        <field id="auth_token" type="string" />
+        <field id="wasClosed" type="bool" value="false" />
+    </interface>
+    <children>
+        <!-- Background -->
+        <Rectangle 
+            id="bg" 
+            width="1920" 
+            height="1080" 
+            color="#0a0a0a" 
+        />
+
+        <!-- Backdrop Image (Dimmed) -->
+        <Poster 
+            id="backdrop"
+            width="1920"
+            height="1080"
+            opacity="0.3"
+            loadDisplayMode="scaleToFit"
+        />
+
+        <!-- Content Container -->
+        <LayoutGroup 
+            translation="[100, 100]"
+            layoutDirection="horiz"
+            itemSpacings="[50]"
+        >
+            <!-- Poster -->
+            <Poster 
+                id="poster"
+                width="300"
+                height="450"
+                loadDisplayMode="scaleToFit"
+            />
+
+            <!-- Details -->
+            <LayoutGroup 
+                layoutDirection="vert"
+                itemSpacings="[20]"
+            >
+                <!-- Title -->
+                <Label 
+                    id="title"
+                    font="font:LargeBoldSystemFont"
+                    color="#FFFFFF"
+                    width="1400"
+                />
+
+                <!-- Year -->
+                <Label 
+                    id="metadata"
+                    font="font:MediumSystemFont"
+                    color="#AAAAAA"
+                    width="1400"
+                />
+
+                <!-- Overview -->
+                <Label 
+                    id="overview"
+                    font="font:MediumSystemFont"
+                    color="#DDDDDD"
+                    width="1400"
+                    wrap="true"
+                    maxLines="6"
+                />
+
+                <Label text="Seasons" font="font:MediumBoldSystemFont" color="#FFFFFF" translation="[0, 20]" />
+
+                <PosterGrid 
+                    id="seasonList"
+                    basePosterSize="[200, 300]"
+                    itemSpacing="[20, 20]"
+                    numColumns="6"
+                    numRows="1"
+                    caption1NumLines="1"
+                    translation="[0, 0]"
+                />
+            </LayoutGroup>
+        </LayoutGroup>
+
+        <!-- Loading Label -->
+        <Label 
+            id="loadingLabel"
+            text="Loading..."
+            translation="[860, 500]"
+            font="font:LargeBoldSystemFont"
+            color="#FFFFFF"
+        />
+    </children>
+    
+    <script type="text/brightscript" uri="pkg:/components/ShowDetailsScene.brs" />
+</component>

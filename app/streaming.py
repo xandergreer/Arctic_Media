@@ -104,6 +104,22 @@ def _first_nonempty(*vals: Optional[str]) -> str:
             return v
     return ""
 
+MEDIA_ROOT = Path(os.getenv("ARCTIC_MEDIA_ROOT", "")).expanduser()
+
+def _resolve_path(mf: MediaFile) -> str:
+    for attr in ("full_path", "path", "file_path", "abs_path"):
+        val = getattr(mf, attr, None)
+        if val:
+            p = Path(val)
+            if p.is_absolute():
+                if p.exists(): return str(p)
+            elif MEDIA_ROOT:
+                joined = MEDIA_ROOT / p
+                if joined.exists(): return str(joined)
+            # Try CWD relative
+            if p.exists(): return str(p)
+    return ""
+
 
 def _ff_bin_from_bundle(name: str) -> str:
     try:
@@ -501,8 +517,8 @@ async def player_page(
     user=Depends(get_current_user),
 ):
     mf, item = await _get_file_and_item(db, file_id)
-    path = getattr(mf, "path", None)
-    if not path or not os.path.isfile(path):
+    path = _resolve_path(mf)
+    if not path:
         raise HTTPException(404, "Missing media file on disk")
     poster = (item.extra_json or {}).get("poster") if item and item.extra_json else None
     return request.app.state.templates.TemplateResponse(  # type: ignore[attr-defined]
@@ -534,8 +550,8 @@ async def stream_file(
         await get_current_user(request=request, db=db)
 
     mf, _ = await _get_file_and_item(db, file_id)
-    path = getattr(mf, "path", None)
-    if not path or not os.path.isfile(path):
+    path = _resolve_path(mf)
+    if not path:
         raise HTTPException(404, "Missing media file on disk")
 
     st = os.stat(path)
@@ -644,8 +660,8 @@ async def head_stream_file(
     else:
         await get_current_user(request=request, db=db)
     mf, _ = await _get_file_and_item(db, file_id)
-    path = getattr(mf, "path", None)
-    if not path or not os.path.isfile(path):
+    path = _resolve_path(mf)
+    if not path:
         raise HTTPException(404, "Missing media file on disk")
     st = os.stat(path)
     headers = {
@@ -676,9 +692,11 @@ async def stream_meta(
     except Exception:
         pass
     try:
-        info = ffprobe_info(mf.path)
-        if info.get("duration"):
-            duration_s = float(info["duration"])
+        path = _resolve_path(mf)
+        if path:
+            info = ffprobe_info(path)
+            if info.get("duration"):
+                duration_s = float(info["duration"])
     except Exception:
         pass
     return {

@@ -106,12 +106,16 @@ async def list_episodes(
             title = re.sub(r'^\d+x\d+\s*[-–]\s*', '', title, flags=re.IGNORECASE)
             title = re.sub(r'^\d+\.\s*', '', title)  # Remove leading episode numbers like "1. "
         
+        # Prefer 'name' from extra_json if it exists (it's the enriched title from TMDB)
+        display_title = ej.get("name") or title or "Unknown Episode"
+
         out.append({
             "id": e.id,
-            "title": title,
-            "still": ej.get("still"),
-            "air_date": ej.get("air_date"),
-            "episode": ej.get("episode"),
+            "title": display_title,
+            "overview": ej.get("overview") or e.overview or "",
+            "still": ej.get("still") or ej.get("poster") or "", # Fallback to poster if still missing
+            "air_date": ej.get("air_date") or "",
+            "episode": ej.get("episode") or 0,
             "first_file_id": first_file_id,
         })
     return out

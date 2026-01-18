@@ -518,7 +518,8 @@ def main() -> None:
             import uvicorn  # type: ignore
             from app.main import app  # type: ignore
             host = os.getenv("HOST", "0.0.0.0")
-            port = int(os.getenv("PORT", "8085"))
+            # Force 8085 unless ARCTIC_PORT is provided. Ignore "PORT" to avoid 8000 conflicts.
+            port = int(os.getenv("ARCTIC_PORT") or "8085")
             uvicorn.run(app, host=host, port=port, log_level="info", proxy_headers=True, forwarded_allow_ips="*", timeout_keep_alive=20)
         except Exception as e:
             import traceback

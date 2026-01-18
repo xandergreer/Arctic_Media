@@ -228,6 +228,21 @@ class PlaybackStats(Base):
     session: Mapped["PlaybackSession"] = relationship(back_populates="stats")
 
 
+class UserProgress(Base):
+    __tablename__ = "user_progress"
+
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    media_item_id: Mapped[str] = mapped_column(ForeignKey("media_items.id", ondelete="CASCADE"), primary_key=True)
+
+    position_ms: Mapped[int] = mapped_column(Integer, default=0)
+    is_finished: Mapped[bool] = mapped_column(Boolean, default=False)
+
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    user: Mapped["User"] = relationship("User")
+    media_item: Mapped["MediaItem"] = relationship("MediaItem")
+
+
 # ---- Sharing / Linked Servers ----
 class ShareInvite(Base):
     __tablename__ = "share_invites"

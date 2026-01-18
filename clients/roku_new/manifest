@@ -1,0 +1,10 @@
+title=Arctic Media V3
+major_version=5
+minor_version=3
+build_version=3
+ui_resolutions=fhd
+splash_min_time=0
+splash_screen_sd=pkg:/images/splash.png
+splash_screen_hd=pkg:/images/splash.png
+mm_icon_focus_hd=pkg:/images/logo_stacked.png
+mm_icon_focus_sd=pkg:/images/logo_stacked.png

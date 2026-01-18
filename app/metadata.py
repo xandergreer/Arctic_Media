@@ -322,10 +322,13 @@ async def enrich_library(
                 it.backdrop_url = data.get("backdrop")
 
         elif it.kind == MediaKind.show:
+            data = dict(it.extra_json or {})
             needs_poster = not (data.get("poster") or it.poster_url)
             tmdb_id = data.get("tmdb_id") if already else None
+            print(f"[DEBUG] Show '{it.title}' ID={it.id} ExistingTMDB={tmdb_id} FORCE={force}")
             if force or (not tmdb_id) or (only_missing and needs_poster):
                 tmdb_id = await _search_tv(api_key, it.title)
+                print(f"[DEBUG] Search '{it.title}' -> TMDB {tmdb_id}")
                 if not tmdb_id:
                     skipped += 1
                     continue
@@ -346,24 +349,48 @@ async def enrich_library(
             se = dict(it.extra_json or {})
             season_no = se.get("season")
             episode_no = se.get("episode")
+            # print(f"[DEBUG] Episode '{it.title}' S{season_no}E{episode_no}")
+            
             if not (season_no and episode_no):
                 skipped += 1
                 continue
 
-            if not tv_id_cache:
-                for show in items:
-                    if show.kind == MediaKind.show and (show.extra_json or {}).get("tmdb_id"):
-                        tv_id_cache[show.id] = show.extra_json["tmdb_id"]
-
+            # Resolve Show TMDB ID via hierarchy: Episode -> Season -> Show
             show_tmdb_id = None
-            for show_id, s_tmdb in tv_id_cache.items():
-                show = next((x for x in items if x.id == show_id), None)
-                if show and show.title and it.title and normalize_sort(show.title) in normalize_sort(it.title):
-                    show_tmdb_id = s_tmdb
-                    break
+            
+            # Find season
+            season_item = next((x for x in items if x.id == it.parent_id), None)
+            if not season_item and it.parent_id:
+                # Fallback: Fetch from DB (async)
+                res = await session.execute(select(MediaItem).where(MediaItem.id == it.parent_id))
+                season_item = res.scalars().first()
+
+            if season_item:
+                # Find show
+                show_id = season_item.parent_id
+                show_item = next((x for x in items if x.id == show_id), None)
+                if not show_item and show_id:
+                     # Fallback: Fetch from DB (async)
+                     res = await session.execute(select(MediaItem).where(MediaItem.id == show_id))
+                     show_item = res.scalars().first()
+
+                if show_item:
+                    # Check if show has TMDB ID
+                    show_meta = show_item.extra_json or {}
+                    if show_meta.get("tmdb_id"):
+                        show_tmdb_id = show_meta["tmdb_id"]
+                    
+            # Fallback (legacy cache or search) - only if hierarchy failed
             if not show_tmdb_id:
-                show_tmdb_id = await _search_tv(api_key, it.title.split("S")[0].strip())
+                # Try cache by show TITLE matching (weak fallback)
+                 for show_id, s_tmdb in tv_id_cache.items():
+                    show = next((x for x in items if x.id == show_id), None)
+                    if show and show.title and it.title and normalize_sort(show.title) in normalize_sort(it.title):
+                         show_tmdb_id = s_tmdb
+                         break
+            
             if not show_tmdb_id:
+                print(f"[DEBUG] SKIPPING Episode '{it.title}' - No Show TMDB ID. Parent Season={it.parent_id}")
                 skipped += 1
                 continue
 
@@ -371,6 +398,10 @@ async def enrich_library(
             if ep_data:
                 se.update(ep_data)
                 it.extra_json = se
+                if ep_data.get("still") and not it.poster_url:
+                    it.poster_url = ep_data.get("still")
+                if ep_data.get("overview") and not it.overview:
+                    it.overview = ep_data.get("overview")
                 ep_filled += 1
 
         processed += 1
@@ -583,23 +614,55 @@ def enrich_library_sync(
             se = dict(it.extra_json or {})
             season_no = se.get("season")
             episode_no = se.get("episode")
+            
+            # Fallback: Parse from title if missing
+            if not (season_no and episode_no) and it.title:
+                import re
+                m = re.search(r"S(\d+)E(\d+)", it.title, re.IGNORECASE)
+                if m:
+                    season_no = int(m.group(1))
+                    episode_no = int(m.group(2))
+                    se["season"] = season_no
+                    se["episode"] = episode_no
+                    it.extra_json = se
+                    # print(f"[DEBUG] Recovered S{season_no}E{episode_no} from title '{it.title}'")
+
             if not (season_no and episode_no):
                 skipped += 1
                 continue
 
-            if not tv_id_cache:
-                for show in items:
-                    if show.kind == MediaKind.show and (show.extra_json or {}).get("tmdb_id"):
-                        tv_id_cache[show.id] = show.extra_json["tmdb_id"]
-
+            # Resolve Show TMDB ID via hierarchy: Episode -> Season -> Show
             show_tmdb_id = None
-            for show_id, s_tmdb in tv_id_cache.items():
-                show = next((x for x in items if x.id == show_id), None)
-                if show and show.title and it.title and normalize_sort(show.title) in normalize_sort(it.title):
-                    show_tmdb_id = s_tmdb
-                    break
+            
+            # Find season
+            season_item = next((x for x in items if x.id == it.parent_id), None)
+            if not season_item and it.parent_id:
+                # Fallback: Fetch from DB
+                # Fallback: Fetch from DB (sync)
+                season_item = session.execute(select(MediaItem).where(MediaItem.id == it.parent_id)).scalars().first()
+
+            if season_item:
+                # Find show
+                show_id = season_item.parent_id
+                show_item = next((x for x in items if x.id == show_id), None)
+                if not show_item and show_id:
+                     # Fallback: Fetch from DB (sync)
+                     show_item = session.execute(select(MediaItem).where(MediaItem.id == show_id)).scalars().first()
+
+                if show_item:
+                    # Check if show has TMDB ID
+                    show_meta = show_item.extra_json or {}
+                    if show_meta.get("tmdb_id"):
+                        show_tmdb_id = show_meta["tmdb_id"]
+
+            # Fallback (legacy cache or search)
             if not show_tmdb_id:
-                show_tmdb_id = _search_tv_sync(api_key, it.title.split("S")[0].strip())
+                 for show_id, s_tmdb in tv_id_cache.items():
+                    show = next((x for x in items if x.id == show_id), None)
+                    if show and show.title and it.title and normalize_sort(show.title) in normalize_sort(it.title):
+                         show_tmdb_id = s_tmdb
+                         break
+            
             if not show_tmdb_id:
                 skipped += 1
                 continue
@@ -608,6 +671,10 @@ def enrich_library_sync(
             if ep_data:
                 se.update(ep_data)
                 it.extra_json = se
+                if ep_data.get("still") and not it.poster_url:
+                    it.poster_url = ep_data.get("still")
+                if ep_data.get("overview") and not it.overview:
+                    it.overview = ep_data.get("overview")
                 ep_filled += 1
 
         processed += 1

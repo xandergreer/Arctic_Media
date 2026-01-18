@@ -273,9 +273,9 @@ async def _bg_scan_library(library_id: str, job_id: str | None = None) -> None:
             
             try:
                 if lib.type == "movie":
-                    stats = await scan_movie_library(db, lib, lib_name, lib_type, lib_id, progress_cb=_progress)
+                    stats = await scan_movie_library(db, lib, lib_name, lib_type, lib_id, force=getattr(lib, "_force_scan", False), progress_cb=_progress)
                 elif lib.type == "tv":
-                    stats = await scan_tv_library(db, lib, lib_name, lib_type, lib_id, progress_cb=_progress)
+                    stats = await scan_tv_library(db, lib, lib_name, lib_type, lib_id, force=getattr(lib, "_force_scan", False), progress_cb=_progress)
                 await db.commit()
 
                 if job_id:
@@ -310,7 +310,7 @@ async def _bg_scan_library(library_id: str, job_id: str | None = None) -> None:
         logging.getLogger(__name__).error(f"Background scan failed: {e}")
         raise
 
-def _bg_scan_library_sync(library_id: str, job_id: str | None = None) -> None:
+def _bg_scan_library_sync(library_id: str, job_id: str | None = None, force: bool = False) -> None:
     """Run a library scan synchronously in the background using synchronous SQLAlchemy."""
     from sqlalchemy import create_engine, event
     from sqlalchemy.orm import sessionmaker
@@ -396,10 +396,10 @@ def _bg_scan_library_sync(library_id: str, job_id: str | None = None) -> None:
                 if lib.type == "movie":
                     # Import here to avoid circular imports
                     from .scanner import scan_movie_library_sync
-                    stats = scan_movie_library_sync(db, lib, lib_name, lib_type, lib_id, progress_cb=_progress)
+                    stats = scan_movie_library_sync(db, lib, lib_name, lib_type, lib_id, force=force, progress_cb=_progress)
                 elif lib.type == "tv":
                     from .scanner import scan_tv_library_sync
-                    stats = scan_tv_library_sync(db, lib, lib_name, lib_type, lib_id, progress_cb=_progress)
+                    stats = scan_tv_library_sync(db, lib, lib_name, lib_type, lib_id, force=force, progress_cb=_progress)
                 db.commit()
                 # If movie scan produced no known paths, emit diagnostic summary
                 if lib.type == "movie" and (stats.get("added",0) == 0):
@@ -574,6 +574,7 @@ async def delete_library(
 @router.post("/{library_id}/scan")
 async def scan_library(
     library_id: str,
+    force: bool = Query(False, description="Force re-scan and metadata refresh"),
     background: bool = Query(False, description="Queue scan and return immediately"),
     db: AsyncSession = Depends(get_db),
     admin = Depends(require_admin),
@@ -589,6 +590,9 @@ async def scan_library(
     library_type = lib.type
     library_path = lib.path
     library_id = lib.id
+    
+    # Store force flag on the library object so bg task can see it
+    lib._force_scan = force
 
     if background:
         # create job row and queue background task
@@ -603,7 +607,7 @@ async def scan_library(
         def run_background_scan():
             """Run the scan synchronously in a background thread"""
             try:
-                _bg_scan_library_sync(library_id, job_id=job.id)
+                _bg_scan_library_sync(library_id, job_id=job.id, force=force)
             except Exception as e:
                 import logging
                 import traceback
@@ -637,11 +641,11 @@ async def scan_library(
 
     # Fallback to direct async scan if not background
     if lib.type == "movie":
-        stats = await scan_movie_library(db, lib, library_name, library_type, library_id)
+        stats = await scan_movie_library(db, lib, library_name, library_type, library_id, force=force)
         return {"ok": True, **stats}
 
     if lib.type == "tv":
-        stats = await scan_tv_library(db, lib, library_name, library_type, library_id)
+        stats = await scan_tv_library(db, lib, library_name, library_type, library_id, force=force)
         # 1) fix mis-titled shows (you already had this)
         retitled = await _retitle_tv_shows(db, library_id)
         # 2) NEW: split files so each SxxEyy gets its own episode row

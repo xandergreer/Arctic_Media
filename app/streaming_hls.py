@@ -118,14 +118,16 @@ async def ensure_segment_auth(request: Request) -> None:
     if tok:
         with contextlib.suppress(Exception):
             p = decode_token(tok)
-            if p.get("aud") == STREAM_AUDIENCE:
+            if p and p.get("aud") == STREAM_AUDIENCE:
                 return
+            log.warning(f"ensure_segment_auth: token aud mismatch or decode failed. tok={tok[:20]}... aud={p.get('aud') if p else 'None'} vs {STREAM_AUDIENCE}")
     cookie = request.cookies.get(ACCESS_COOKIE)
     if cookie:
         with contextlib.suppress(Exception):
             p = decode_token(cookie)
-            if p.get("typ") == "access":
+            if p and p.get("typ") == "access":
                 return
+            log.warning(f"ensure_segment_auth: cookie typ mismatch or decode failed. typ={p.get('typ') if p else 'None'}")
     raise HTTPException(401, "Unauthorized for segment")
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -1290,14 +1292,24 @@ async def hls_master(
     return Response(manifest, media_type="application/vnd.apple.mpegurl", headers=headers)
 
 @router.get("/{item_id}/hls/{job_id}/init.mp4")
-async def hls_init_segment(item_id: str, job_id: str, request: Request, token: Optional[str] = Query(None)):
+async def hls_init_segment(item_id: str, job_id: str, request: Request, token: Optional[str] = Query(None, alias="t")):
     # Verify token if provided (for mobile app)
     if token:
         try:
             payload = decode_token(token)
-            if not payload or payload.get("typ") != "access":
+            if not payload:
+                log.warning(f"hls_init_segment 401: decode_token failed for token starting with {token[:15]}")
                 raise HTTPException(status_code=401, detail="Invalid token")
-        except Exception:
+            # Accept if it's a valid access token OR a specific stream-segment token
+            valid_access = payload and payload.get("typ") == "access"
+            valid_segment = payload and payload.get("aud") == STREAM_AUDIENCE
+            if not (valid_access or valid_segment):
+                log.warning(f"hls_init_segment 401: scope mismatch. typ={payload.get('typ')}, aud={payload.get('aud')}")
+                raise HTTPException(status_code=401, detail="Invalid token")
+        except HTTPException:
+            raise
+        except Exception as e:
+            log.warning(f"hls_init_segment 401: unexpected error: {e}")
             raise HTTPException(status_code=401, detail="Invalid token")
     else:
         await ensure_segment_auth(request)
@@ -1313,14 +1325,24 @@ async def hls_init_segment(item_id: str, job_id: str, request: Request, token: O
     return FileResponse(p, media_type="video/mp4", headers={"Cache-Control": "no-store"})
 
 @router.get("/{item_id}/hls/{job_id}/{segment}")
-async def hls_segment(item_id: str, job_id: str, segment: str, request: Request, token: Optional[str] = Query(None)):
+async def hls_segment(item_id: str, job_id: str, segment: str, request: Request, token: Optional[str] = Query(None, alias="t")):
     # Verify token if provided (for mobile app)
     if token:
         try:
             payload = decode_token(token)
-            if not payload or payload.get("typ") != "access":
+            if not payload:
+                log.warning(f"hls_segment 401: decode_token failed")
                 raise HTTPException(status_code=401, detail="Invalid token")
-        except Exception:
+            # Accept if it's a valid access token OR a specific stream-segment token
+            valid_access = payload and payload.get("typ") == "access"
+            valid_segment = payload and payload.get("aud") == STREAM_AUDIENCE
+            if not (valid_access or valid_segment):
+                log.warning(f"hls_segment 401: scope mismatch. typ={payload.get('typ')}, aud={payload.get('aud')}")
+                raise HTTPException(status_code=401, detail="Invalid token")
+        except HTTPException:
+            raise
+        except Exception as e:
+            log.warning(f"hls_segment 401: unexpected error: {e}")
             raise HTTPException(status_code=401, detail="Invalid token")
     else:
         await ensure_segment_auth(request)

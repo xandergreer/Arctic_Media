@@ -1,0 +1,140 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component name="NetworkTask" extends="Task">
+  <script type="text/brightscript" uri="pkg:/source/api.brs" />
+  <interface>
+    <field id="url" type="string" />
+    <field id="method" type="string" value="GET" />
+    <field id="body" type="assocarray" />
+    <field id="headers" type="assocarray" />
+    <field id="response" type="assocarray" />
+    <field id="debugMsg" type="string" />
+  </interface>
+  <script type="text/brightscript">
+    <![CDATA[
+      sub init()
+        m.top.functionName = "execute"
+      end sub
+
+      sub execute()
+        m.top.debugMsg = "Task: 1. Start"
+        url = m.top.url
+        method = m.top.method
+        body = m.top.body
+        headers = m.top.headers
+        
+        if url = invalid or url = "" then
+          m.top.response = { status: "error", message: "Missing URL" }
+          m.top.debugMsg = "Task: Missing URL"
+          return
+        end if
+
+        req = CreateObject("roUrlTransfer")
+        port = CreateObject("roMessagePort")
+        req.SetMessagePort(port)
+        
+        req.SetUrl(url)
+        
+        if LCase(Left(url, 5)) = "https" then
+            req.InitClientCertificates()
+        end if
+        
+        req.AddHeader("Accept", "application/json")
+        
+        ' Add Custom Headers
+        if headers <> invalid
+             for each key in headers
+                 req.AddHeader(key, headers[key])
+             end for
+        end if
+        
+        json_str = "{}"
+        
+        if method = "POST" and body <> invalid
+            req.AddHeader("Content-Type", "application/json")
+            if body.Count() > 0
+                 json_str = FormatJson(body)
+            end if
+        end if
+        
+        m.top.debugMsg = "Task: 4. Sending Async..."
+        
+        started = false
+        if method = "POST" then
+          started = req.AsyncPostFromString(json_str)
+        else
+          started = req.AsyncGetToString()
+        end if
+        
+        if not started then
+             m.top.debugMsg = "Task: 4a. Async Fail"
+             m.top.response = { status: "error", message: "Async Launch Failed" }
+             return
+        end if
+        
+        m.top.debugMsg = "Task: 5. Waiting..."
+        
+        msg = wait(10000, port) ' 10s wait
+        
+        if type(msg) = "roUrlEvent" then
+             code = msg.GetResponseCode()
+             m.top.debugMsg = "Task: 6. Code=" + code.ToStr()
+             
+             if code = 200 then
+                  rsp = msg.GetString()
+                  m.top.debugMsg = "Task: 7. Got String"
+                  
+                  if rsp = invalid or rsp.Len() = 0 then
+                      m.top.debugMsg = "Task: 7a. Empty"
+                      m.top.response = { status: "error", message: "Empty Response" }
+                  else
+                      firstChar = Left(rsp, 1)
+                      m.top.debugMsg = "Task: 7b. 1st=" + firstChar
+                      
+                      if firstChar = "<" then
+                          ' HTML detected
+                          m.top.debugMsg = "Task: 7c. HTML Detect"
+                          m.top.response = { status: "error", message: "Server sent HTML (Login Page?)" }
+                      else
+                          m.top.debugMsg = "Task: 7d. Parsing " + rsp.Len().ToStr() + "b"
+                          
+                          ' Use Global Function instead of Object
+                          json = ParseJson(rsp)
+                          
+                          if json = invalid then
+                              m.top.debugMsg = "Task: 7e. Bad JSON"
+                              m.top.response = { status: "error", message: "Invalid JSON Content" }
+                          else
+                              t = type(json)
+                              m.top.debugMsg = "Task: 7f. Type=" + t
+                              
+                              if t = "roArray" then
+                                  ' Wrap array to fit in assocarray field
+                                  m.top.response = { data: json, is_array: true }
+                              else if t = "roAssociativeArray" then
+                                  m.top.response = json
+                              else
+                                  m.top.response = { status: "error", message: "JSON Type " + t }
+                              end if
+                              
+                              m.top.debugMsg = "Task: 7g. Assigned"
+                          end if
+                      end if
+                  end if
+             else
+                  m.top.debugMsg = "Task: 6a. HTTP Error"
+                  failMsg = msg.GetFailureReason()
+                  m.top.response = { status: "error", message: "HTTP " + code.ToStr() + ": " + failMsg }
+             end if
+        else if msg = invalid then
+             m.top.debugMsg = "Task: 5a. Timeout"
+             m.top.response = { status: "error", message: "Network Timeout" }
+        else
+             m.top.debugMsg = "Task: 5b. Unknown Event"
+             m.top.response = { status: "error", message: "Unknown Event" }
+        end if
+        
+        m.top.debugMsg = "Task: 8. Done"
+      end sub
+    ]]>
+  </script>
+</component>

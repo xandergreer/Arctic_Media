@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<component name="NavButton" extends="Group">
+    <interface>
+        <field id="text" type="string" onChange="OnTextChanged" />
+        <field id="buttonSelected" type="bool" />
+        <field id="minWidth" type="float" value="150.0" />
+    </interface>
+
+    <script type="text/brightscript" uri="pkg:/components/NavButton.brs" />
+
+    <children>
+        <!-- Background (Invisible for hit target, or hover effect if we wanted) -->
+        <Rectangle 
+            id="bg" 
+            width="250" 
+            height="50" 
+            color="#FFFFFF" 
+            opacity="0.0" 
+        />
+
+        <!-- Text Label -->
+        <Label 
+            id="lbl" 
+            text="" 
+            font="font:MediumSystemFont" 
+            color="#888888" 
+            horizAlign="center" 
+            vertAlign="center"
+            width="250"
+            height="50"
+        />
+
+        <!-- Focus Indicator (Underline) -->
+        <Rectangle 
+            id="underline" 
+            width="0" 
+            height="4" 
+            color="#3498db" 
+            translation="[125, 55]"
+            visible="false"
+        />
+        <!-- 3498db is a nice blue "Arctic" accent -->
+    </children>
+</component>

@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -16,6 +17,7 @@
             margin: 0;
             padding: 20px;
         }
+
         .container {
             background: #1a1a1a;
             border-radius: 8px;
@@ -24,19 +26,23 @@
             width: 100%;
             box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
         }
+
         h1 {
             margin-top: 0;
             text-align: center;
             color: #ffffff;
         }
+
         .form-group {
             margin-bottom: 20px;
         }
+
         label {
             display: block;
             margin-bottom: 8px;
             color: #cccccc;
         }
+
         input {
             width: 100%;
             padding: 12px;
@@ -47,10 +53,12 @@
             font-size: 16px;
             box-sizing: border-box;
         }
+
         input:focus {
             outline: none;
             border-color: #4a9eff;
         }
+
         button {
             width: 100%;
             padding: 12px;
@@ -62,31 +70,38 @@
             cursor: pointer;
             transition: background 0.2s;
         }
+
         button:hover:not(:disabled) {
             background: #333333;
         }
+
         button:disabled {
             opacity: 0.5;
             cursor: not-allowed;
         }
+
         .message {
             margin-top: 20px;
             padding: 12px;
             border-radius: 4px;
             text-align: center;
         }
+
         .message.success {
             background: #1a4d1a;
             color: #4caf50;
         }
+
         .message.error {
             background: #4d1a1a;
             color: #f44336;
         }
+
         .message.info {
             background: #1a1a4d;
             color: #4a9eff;
         }
+
         .login-prompt {
             text-align: center;
             margin-top: 20px;
@@ -94,15 +109,18 @@
             background: #262626;
             border-radius: 4px;
         }
+
         .login-prompt a {
             color: #4a9eff;
             text-decoration: none;
         }
+
         .login-prompt a:hover {
             text-decoration: underline;
         }
     </style>
 </head>
+
 <body>
     <div class="container">
         <h1>Pair Device</h1>
@@ -110,22 +128,25 @@
             <p>You must be logged in to pair a device.</p>
             <a href="/login?return_url=/pair">Log in</a>
         </div>
-        <div id="pair-form" style="display: none;">
+        <div id="pair-form">
             <div class="form-group">
                 <label for="user-code">Enter the code displayed on your device:</label>
                 <input type="text" id="user-code" placeholder="ABCD-1234" maxlength="9" autocomplete="off">
             </div>
-            <button id="authorize-btn" onclick="authorizeDevice()">Authorize Device</button>
+            <button id="authorize-btn">Authorize Device</button>
             <div id="message"></div>
         </div>
     </div>
 
     <script nonce="{{ request.state.csp_nonce if request.state.csp_nonce else '' }}">
-        const serverUrl = {{ server_url|tojson }};
-        
         // Format code input (ABCD-1234)
-        document.getElementById('user-code').addEventListener('input', function(e) {
-            let value = e.target.value.replace(/[^A-Z0-9]/g, '').toUpperCase();
+        const codeInput = document.getElementById('user-code');
+        const authBtn = document.getElementById('authorize-btn');
+
+        authBtn.addEventListener('click', authorizeDevice);
+
+        codeInput.addEventListener('input', function (e) {
+            let value = e.target.value.replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
             if (value.length > 4) {
                 value = value.slice(0, 4) + '-' + value.slice(4, 8);
             }
@@ -154,7 +175,7 @@
             const codeInput = document.getElementById('user-code');
             const btn = document.getElementById('authorize-btn');
             const messageDiv = document.getElementById('message');
-            
+
             const code = codeInput.value.trim().toUpperCase();
             if (!code || code.length < 9) {
                 showMessage('Please enter a valid code (ABCD-1234)', 'error');
@@ -191,6 +212,7 @@
                 }
             } catch (error) {
                 console.error('Authorization failed:', error);
+                alert('Connection Error: ' + error);
                 showMessage('Network error. Please check your connection and try again.', 'error');
             } finally {
                 btn.disabled = false;
@@ -207,4 +229,5 @@
         checkLogin();
     </script>
 </body>
+
 </html>
