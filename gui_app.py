@@ -6,6 +6,8 @@ from collections import deque
 import subprocess
 import webbrowser
 import urllib.request
+import contextlib
+import shutil
 
 try:
     import tkinter as tk
@@ -211,6 +213,8 @@ class App:
         self._build_ui()
         self._tray_icon = None
         self._status_updater()
+        # Check for FFmpeg on first run
+        self._ensure_ffmpeg()
 
     def _build_ui(self) -> None:
         frm = ttk.Frame(self.root, padding=12)
@@ -364,6 +368,108 @@ class App:
             self._logs_window()
         except Exception:
             pass
+
+    def _ensure_ffmpeg(self) -> None:
+        """Check for FFmpeg and download if missing (Windows only)."""
+        if os.name != "nt":
+            return
+        try:
+            appdata = os.environ.get("APPDATA") or os.path.expanduser("~")
+            ffmpeg_dir = os.path.join(appdata, "ArcticMedia", "ffmpeg")
+            ffmpeg_exe = os.path.join(ffmpeg_dir, "ffmpeg.exe")
+            ffprobe_exe = os.path.join(ffmpeg_dir, "ffprobe.exe")
+            
+            if os.path.exists(ffmpeg_exe) and os.path.exists(ffprobe_exe):
+                return  # Already have FFmpeg
+            
+            # Check if download marker exists (prevents repeated prompts)
+            marker = os.path.join(ffmpeg_dir, ".download_attempted")
+            if os.path.exists(marker):
+                return  # Already attempted download
+            
+            # Ask user if they want to download FFmpeg
+            if messagebox:
+                result = messagebox.askyesno(
+                    "FFmpeg Required",
+                    "FFmpeg is required for media playback.\n\n"
+                    "Would you like to download it automatically?\n\n"
+                    "If you already have FFmpeg installed, you can skip this.",
+                    icon="question"
+                )
+                if not result:
+                    os.makedirs(ffmpeg_dir, exist_ok=True)
+                    with open(marker, "w") as f:
+                        f.write("skipped")
+                    return
+            
+            # Download FFmpeg
+            self._download_ffmpeg(ffmpeg_dir)
+        except Exception:
+            pass  # Silently fail - user can install FFmpeg manually
+    
+    def _download_ffmpeg(self, target_dir: str) -> None:
+        """Download FFmpeg essentials ZIP and extract to target_dir."""
+        import zipfile
+        import tempfile
+        
+        try:
+            os.makedirs(target_dir, exist_ok=True)
+            
+            # FFmpeg essentials download URL (using GitHub releases)
+            # Using a known-good FFmpeg essentials build for Windows
+            url = "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip"
+            
+            if messagebox:
+                messagebox.showinfo(
+                    "Downloading FFmpeg",
+                    "Downloading FFmpeg essentials...\n\n"
+                    "This may take a few minutes.\n"
+                    "The window may appear frozen during download."
+                )
+            
+            # Download ZIP
+            zip_path = os.path.join(tempfile.gettempdir(), "ffmpeg_essentials.zip")
+            urllib.request.urlretrieve(url, zip_path)
+            
+            # Extract ffmpeg.exe and ffprobe.exe
+            with zipfile.ZipFile(zip_path, "r") as zip_ref:
+                # Find ffmpeg.exe and ffprobe.exe in the ZIP
+                for name in zip_ref.namelist():
+                    if name.endswith("ffmpeg.exe"):
+                        zip_ref.extract(name, tempfile.gettempdir())
+                        extracted = os.path.join(tempfile.gettempdir(), name)
+                        shutil.move(extracted, os.path.join(target_dir, "ffmpeg.exe"))
+                    elif name.endswith("ffprobe.exe"):
+                        zip_ref.extract(name, tempfile.gettempdir())
+                        extracted = os.path.join(tempfile.gettempdir(), name)
+                        shutil.move(extracted, os.path.join(target_dir, "ffprobe.exe"))
+            
+            # Clean up
+            with contextlib.suppress(Exception):
+                os.remove(zip_path)
+            
+            # Create marker
+            marker = os.path.join(target_dir, ".download_attempted")
+            with open(marker, "w") as f:
+                f.write("downloaded")
+            
+            if messagebox:
+                messagebox.showinfo("Success", "FFmpeg downloaded successfully!")
+        except Exception as e:
+            if messagebox:
+                messagebox.showerror(
+                    "Download Failed",
+                    f"Failed to download FFmpeg:\n{str(e)}\n\n"
+                    "Please install FFmpeg manually from:\n"
+                    "https://ffmpeg.org/download.html"
+                )
+            # Create marker to prevent repeated prompts
+            try:
+                marker = os.path.join(target_dir, ".download_attempted")
+                with open(marker, "w") as f:
+                    f.write("failed")
+            except Exception:
+                pass
 
     def _maybe_first_run_tip(self) -> None:
         try:

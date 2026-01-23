@@ -53,6 +53,7 @@ from .settings_api import router as settings_api_router
 from .nav_api import router as nav_router
 from .ui_nav import router as ui_nav_router
 from .tv_api import router as tv_api_router
+from .pairing import router as pairing_router
 from .streaming import router as streaming_router                 # /stream/{id}/file, /auto, etc.
 from .streaming_hls import (
     router as hls_router,                                         # /stream/{item_id}/master.m3u8 + /hls/*
@@ -63,6 +64,8 @@ from .streaming_hls import (
 from .models import Library, MediaItem, MediaKind, User, MediaFile, ServerSetting
 from .metadata import _movie_detail_pack, _search_movie, _tv_detail_pack, _search_tv, _episode_detail_pack
 from .scheduler import start_scheduler
+from .dashboard import router as dashboard_router
+from .media_api import router as media_api_router
 
 # ── App setup ─────────────────────────────────────────────────────────────────
 app = FastAPI(title="Arctic Media", version="2.0.0")
@@ -77,6 +80,23 @@ def invalidate_public_base_url_cache():
     global _public_base_url_cache, _cache_time
     _public_base_url_cache = None
     _cache_time = 0
+
+app.include_router(auth_router)
+app.include_router(libraries_router)
+app.include_router(fs_router)
+app.include_router(admin_users_router)
+app.include_router(tasks_api_router)
+app.include_router(jobs_router)
+app.include_router(settings_api_router)
+app.include_router(nav_router)
+app.include_router(ui_nav_router)
+app.include_router(tv_api_router)
+app.include_router(pairing_router)
+app.include_router(streaming_router)
+app.include_router(hls_router)
+app.include_router(jf_stream_router)
+app.include_router(dashboard_router)
+app.include_router(media_api_router)
 
 # ── Static & templates ────────────────────────────────────────────────────────
 def _resolve_resource_dirs():
@@ -118,9 +138,14 @@ app.state.templates = templates
 app.add_middleware(SessionMiddleware, secret_key=settings.SECRET_KEY)
 # Compress responses > ~1KB (helps over WAN/SSL)
 app.add_middleware(GZipMiddleware, minimum_size=1024)
+# Configure CORS - allow origins from settings or all if configured
+cors_origins = []
+if settings.ALLOW_ORIGINS:
+    cors_origins = [origin.strip() for origin in settings.ALLOW_ORIGINS.split(",") if origin.strip()]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[],                # keep same-origin; set if you need remote UI
+    allow_origins=cors_origins if cors_origins else ["*"],  # Allow all if not specified (for domain setup)
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -264,6 +289,7 @@ async def require_login_for_pages(request: Request, call_next):
             path.startswith("/static/")
             or path.startswith("/auth/")
             or path in {"/login", "/register", "/pair", "/favicon.ico"}
+            or path in {"/login", "/register", "/favicon.ico", "/pair"}
             or path.startswith("/docs")
             or path.startswith("/redoc")
             or path == "/openapi.json"
@@ -312,6 +338,7 @@ async def startup_event():
     except Exception:
         pass
     await init_db()
+    print("--- ARCTIC MEDIA BACKEND V13 ---")
     # Load transcoder settings and set ffmpeg overrides in env
     try:
         from sqlalchemy import select as _sa_select
@@ -454,7 +481,9 @@ async def admin_settings_page(
 
 @app.get("/login", response_class=HTMLResponse)
 async def login_page(request: Request):
-    return templates.TemplateResponse("login.html", {"request": request, "hide_chrome": True})
+    # Get return_url from query params to pass to template
+    return_url = request.query_params.get("return_url", "/home")
+    return templates.TemplateResponse("login.html", {"request": request, "hide_chrome": True, "return_url": return_url})
 
 @app.get("/register", response_class=HTMLResponse)
 async def register_page(request: Request):
@@ -580,6 +609,7 @@ async def show_detail_page(show_id: str, request: Request, db: AsyncSession = De
 
     # first playable (first ep's first file)
     first_play_file_id = None
+    first_play_item_id = None
     if seasons:
         first_ep = (await db.execute(
             select(MediaItem)
@@ -588,6 +618,7 @@ async def show_detail_page(show_id: str, request: Request, db: AsyncSession = De
             .limit(1)
         )).scalars().first()
         if first_ep:
+            first_play_item_id = first_ep.id
             first_file = (await db.execute(
                 select(MediaFile).where(MediaFile.media_item_id == first_ep.id).limit(1)
             )).scalars().first()
@@ -595,7 +626,7 @@ async def show_detail_page(show_id: str, request: Request, db: AsyncSession = De
 
     return templates.TemplateResponse(
         "show_detail.html",
-        {"request": request, "item": show, "seasons": seasons, "episodes": [], "first_play_file_id": first_play_file_id, "user": user}
+        {"request": request, "item": show, "seasons": seasons, "episodes": [], "first_play_file_id": first_play_file_id, "first_play_item_id": first_play_item_id, "user": user}
     )
 
 @app.get("/show/{show_id}/season/{season_num}", response_class=HTMLResponse)
@@ -723,7 +754,8 @@ async def admin_update_movie(
                     item.extra_json = se
                     if not body.poster_url and data.get("still"):
                         item.poster_url = data.get("still")
-                    ttl = body.title if body.title is not None else data.get("title")
+                    # For episodes, TMDB returns "name", not "title"
+                    ttl = body.title if body.title is not None else data.get("name") or data.get("title")
                     if ttl and ttl.strip():
                         item.title = ttl.strip()
                         item.sort_title = normalize_sort(item.title)
@@ -883,7 +915,8 @@ async def admin_update_movie(
                     item.extra_json = se
                     if not body.poster_url and data.get("still"):
                         item.poster_url = data.get("still")
-                    ttl = body.title if body.title is not None else data.get("title")
+                    # For episodes, TMDB returns "name", not "title"
+                    ttl = body.title if body.title is not None else data.get("name") or data.get("title")
                     if ttl and ttl.strip():
                         item.title = ttl.strip()
                         item.sort_title = normalize_sort(item.title)
@@ -966,6 +999,7 @@ app.include_router(ui_nav_router)
 app.include_router(tv_api_router)
 
 # Media/streaming APIs
+app.include_router(pairing_router)  # /pair/* endpoints for Roku device pairing
 app.include_router(streaming_router)   # /stream/{file_id}/file, /stream/{file_id}/auto, etc.
 app.include_router(hls_router)         # /stream/{item_id}/master.m3u8 and /stream/{item_id}/hls/*
 app.include_router(jf_stream_router)      # /Videos/{itemId}/master.m3u8 and /Videos/{itemId}/hls/*

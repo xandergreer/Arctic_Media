@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<component name="MainScene" extends="Scene">
+    <children>
+        <Label 
+            id="helloLabel" 
+            text="Arctic Media V2 - Clean Install" 
+            width="1280" 
+            translation="[0, 300]" 
+            horizAlign="center" 
+            font="font:LargeBoldSystemFont" 
+        />
+    </children>
+</component>

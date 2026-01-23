@@ -15,8 +15,8 @@
       {% if ej.get('overview') %}<p class="hero-overview">{{ ej['overview'] }}</p>{% endif %}
       <div class="actions">
         {% if first_play_file_id %}
-        <button id="playBtn" class="btn primary" data-file-id="{{ first_play_file_id }}" data-item-id="{{ item.id }}"
-          data-title="{{ item.title|e }}">▶ Play</button>
+        <button id="playBtn" class="btn primary" data-file-id="{{ first_play_file_id }}"
+          data-item-id="{{ first_play_item_id or first_play_file_id }}" data-title="{{ item.title|e }}">▶ Play</button>
         {% endif %}
         {% if user and user.is_admin %}
         <button id="editShowBtn" class="btn" title="Edit metadata"
@@ -48,8 +48,8 @@
     </div>
     <div class="player-area">
       <video id="plyr" playsinline controls preload="metadata" poster="{{ poster }}" {% if first_play_file_id
-        %}data-file-id="{{ first_play_file_id }}" data-item-id="{{ item.id }}" data-title="{{ item.title|e }}" {% endif
-        %}></video>
+        %}data-file-id="{{ first_play_file_id }}" data-item-id="{{ first_play_item_id or first_play_file_id }}"
+        data-title="{{ item.title|e }}" {% endif %}></video>
     </div>
   </section>
 
@@ -101,8 +101,8 @@
       {% for ep in episodes %}
       {% set eej = ep.extra_json or {} %}
       {% set still = eej.get('still') or ep.poster_url or poster %}
-      <button class="card ep-card" type="button" data-file-id="{{ ep.first_file_id }}" data-title="{{ ep.title|e }}"
-        style="position:relative;">
+      <button class="card ep-card" type="button" data-file-id="{{ ep.first_file_id }}" data-item-id="{{ ep.id }}"
+        data-title="{{ ep.title|e }}" style="position:relative;">
         <img loading="lazy" src="{{ still }}" alt="{{ ep.title }}">
         <div class="card-meta">
           <div class="title">{{ "%02d" % (eej.get('episode') or loop.index) }} · {{ ep.title }}</div>
@@ -244,6 +244,7 @@
   }
 
   @media (min-width: 1400px) {
+
     #seasons-grid,
     #episodes-grid {
       grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
@@ -251,6 +252,7 @@
   }
 
   @media (min-width: 1200px) and (max-width: 1399px) {
+
     #seasons-grid,
     #episodes-grid {
       grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
@@ -258,6 +260,7 @@
   }
 
   @media (max-width: 768px) {
+
     #seasons-grid,
     #episodes-grid {
       grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
@@ -268,7 +271,7 @@
       align-items: flex-start;
       gap: 8px;
     }
-    
+
     .card-meta .title {
       font-size: 12px;
       line-height: 1.3;
@@ -276,24 +279,25 @@
   }
 
   @media (max-width: 480px) {
+
     #seasons-grid,
     #episodes-grid {
       grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
       gap: 12px;
     }
-    
+
     .card img {
       height: 180px;
     }
-    
+
     .card-meta {
       padding: 6px;
     }
-    
+
     .card-meta .title {
       font-size: 11px;
     }
-    
+
     .card-meta .sub {
       font-size: 10px;
     }
@@ -557,13 +561,14 @@
           card.className = 'card ep-card';
           card.type = 'button';
           card.setAttribute('data-file-id', episode.first_file_id || '');
+          card.setAttribute('data-item-id', episode.id || '');
           card.setAttribute('data-title', episode.title || '');
           card.style.position = 'relative';
 
           const episodeNum = episode.episode || (index + 1);
           const still = episode.still || '{{ poster }}';
           const airDate = episode.air_date || '';
-          
+
           // Clean up episode title
           let cleanTitle = episode.title || '';
           if (cleanTitle) {
@@ -575,7 +580,7 @@
             cleanTitle = cleanTitle.replace(/^\d+\.\s*/, '');
             cleanTitle = cleanTitle.trim();
           }
-          
+
           // Fallback title if empty
           if (!cleanTitle) {
             cleanTitle = `Episode ${episodeNum}`;
@@ -592,9 +597,10 @@
           // Add click handler for episode playback
           card.addEventListener('click', function () {
             const fileId = this.getAttribute('data-file-id');
+            const itemId = this.getAttribute('data-item-id');
             const title = this.getAttribute('data-title');
             if (fileId && window.playItem) {
-              window.playItem(fileId, cleanTitle);
+              window.playItem(fileId, title, itemId);
             }
           });
 

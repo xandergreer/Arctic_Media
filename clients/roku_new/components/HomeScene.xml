@@ -1,0 +1,164 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<component name="HomeScene" extends="Scene">
+    <script type="text/brightscript" uri="pkg:/source/api.brs" />
+    <interface>
+        <field id="server_url" type="string" />
+        <field id="auth_token" type="string" />
+        <field id="logout_requested" type="bool" />
+    </interface>
+    <children>
+        <!-- Background Color -->
+        <Rectangle 
+            id="bg" 
+            width="1920" 
+            height="1080" 
+            color="#0a0a0a" 
+        />
+
+        <!-- Hero Backdrop (Dynamic) -->
+        <Poster 
+            id="heroBackdrop"
+            width="1920"
+            height="1080"
+            opacity="0.4"
+            loadDisplayMode="scaleToFit"
+        />
+
+        <!-- Header Area -->
+        <Group translation="[50, 40]">
+            <!-- Arctic Media Logo -->
+            <Poster 
+                id="headerLogo"
+                uri="pkg:/images/logo.png"
+                width="150"
+                height="150"
+                loadDisplayMode="scaleToFit"
+            />
+            
+            <!-- Navigation Bar (Manual LayoutGroup) -->
+            <LayoutGroup 
+                id="topNav"
+                translation="[180, 50]"
+                layoutDirection="horiz"
+                itemSpacings="[20]"
+            >
+                <NavButton id="btnHome" text="Home" />
+                <NavButton id="btnMovies" text="Movies" />
+                <NavButton id="btnTV" text="TV Shows" />
+                <NavButton id="btnSettings" text="Settings" />
+            </LayoutGroup>
+        </Group>
+
+        <!-- Settings Button REMOVED (Moved to TopNav) -->
+        
+        <!-- Hero Details (Info about focused item) -->
+        <LayoutGroup
+            id="heroInfo"
+            translation="[100, 250]"
+            layoutDirection="vert"
+            itemSpacings="[10]"
+            visible="true"
+        >
+            <Label 
+                id="heroTitle" 
+                text="" 
+                font="font:LargeBoldSystemFont" 
+                color="#FFFFFF" 
+                width="1200"
+            />
+            <Label 
+                id="heroOverview" 
+                text="" 
+                font="font:MediumSystemFont" 
+                color="#DDDDDD" 
+                width="1000" 
+                wrap="true" 
+                maxLines="3"
+            />
+        </LayoutGroup>
+
+        <!-- === HOME TAB (RowList for Scrolling) === -->
+        <RowList 
+            id="homeRowList"
+            translation="[0, 450]"
+            itemSize="[1920, 350]"
+            rowItemSize="[[200, 300]]"
+            rowItemSpacing="[[30, 0]]"
+            showRowLabel="true"
+            rowLabelOffset="[[100, 20]]"
+            rowFocusAnimationStyle="floatingFocus"
+            visible="true"
+            numRows="3"
+            rowHeights="[370]"
+        />
+        <!-- === MOVIES TAB === -->
+        <Group id="tabMovies" translation="[100, 400]" visible="false">
+            <!-- Header Row -->
+            <Label 
+                text="All Movies" 
+                font="font:MediumBoldSystemFont" 
+                color="#FFFFFF" 
+                translation="[0, 0]" 
+            />
+            <NavButton 
+                id="btnMoviesSort" 
+                text="Sort: Recent" 
+                translation="[1400, 0]" 
+            />
+            
+            <!-- Grid (Y=60 to clear header) -->
+            <PosterGrid 
+                id="allMoviesGrid"
+                translation="[0, 60]"
+                basePosterSize="[200, 300]" 
+                itemSpacing="[20, 20]" 
+                numColumns="7" 
+                numRows="3"
+                caption1NumLines="1" 
+                wrapping="false"
+            />
+        </Group>
+
+        <!-- === TV TAB === -->
+        <Group id="tabTV" translation="[100, 400]" visible="false">
+            <!-- Header Row -->
+            <Label 
+                text="All TV Shows" 
+                font="font:MediumBoldSystemFont" 
+                color="#FFFFFF" 
+                translation="[0, 0]" 
+            />
+            <NavButton 
+                id="btnTvSort" 
+                text="Sort: Recent" 
+                translation="[1400, 0]" 
+            />
+            
+            <!-- Grid -->
+            <PosterGrid 
+                id="allTvGrid"
+                translation="[0, 60]"
+                basePosterSize="[200, 300]" 
+                itemSpacing="[20, 20]" 
+                numColumns="7" 
+                numRows="3"
+                caption1NumLines="1" 
+                wrapping="false"
+            />
+        </Group>
+
+        <!-- Loading Indicator -->
+        <Label 
+            id="loadingLabel" 
+            text="Loading content..." 
+            width="1920" 
+            translation="[0, 500]" 
+            horizAlign="center" 
+            font="font:LargeBoldSystemFont"
+        />
+        
+        
+    </children>
+    
+    <script type="text/brightscript" uri="pkg:/components/HomeScene.brs" />
+</component>

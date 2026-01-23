@@ -1,10 +1,16 @@
 # app/config.py
 import os
+import sys
+from pathlib import Path
 from pydantic import Field
 from pydantic_settings import BaseSettings
 from dotenv import load_dotenv
 
 load_dotenv(override=True)
+if getattr(sys, 'frozen', False):
+    # PyInstaller environment: also check next to the executable
+    exe_dir = Path(sys.executable).parent
+    load_dotenv(exe_dir / ".env", override=True)
 
 class Settings(BaseSettings):
     # branding
@@ -22,7 +28,8 @@ class Settings(BaseSettings):
     DEBUG: bool = False
 
     # crypto and session
-    SECRET_KEY: str = Field(default_factory=lambda: os.urandom(32).hex())
+    # Use a stable default if .env is missing to prevent key-flip on reloads
+    SECRET_KEY: str = Field(default="arctic_media_stable_fallback_key_2024", description="JWT secret key")
     COOKIE_SECURE: bool = False  # set True behind TLS
 
     # database

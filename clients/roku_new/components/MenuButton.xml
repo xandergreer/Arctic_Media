@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<component name="MenuButton" extends="Group">
+    <interface>
+        <field id="text" type="string" onChange="OnTextChanged" />
+        <field id="buttonSelected" type="bool" />
+        <field id="width" type="float" value="500.0" />
+    </interface>
+
+    <script type="text/brightscript" uri="pkg:/components/MenuButton.brs" />
+
+    <children>
+        <!-- Background (Invisible hit target) -->
+        <Rectangle 
+            id="bg" 
+            width="500" 
+            height="60" 
+            color="#FFFFFF" 
+            opacity="0.0" 
+        />
+
+        <!-- Focus Bar (Left) -->
+        <Rectangle 
+            id="focusInd" 
+            width="6" 
+            height="40" 
+            color="#3498db" 
+            translation="[0, 10]"
+            visible="false"
+        />
+
+        <!-- Text Label -->
+        <Label 
+            id="lbl" 
+            text="" 
+            font="font:MediumSystemFont" 
+            color="#888888" 
+            horizAlign="left" 
+            vertAlign="center"
+            translation="[30, 0]"
+            width="470"
+            height="60"
+        />
+    </children>
+</component>

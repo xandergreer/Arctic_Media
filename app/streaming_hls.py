@@ -1,7 +1,7 @@
 # app/streaming_hls.py
 from __future__ import annotations
 
-import asyncio, contextlib, hashlib, logging, math, os, shlex, signal, tempfile, time, shutil, sys
+import asyncio, contextlib, hashlib, logging, math, os, shlex, signal, tempfile, time, shutil, sys, subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, Optional, Tuple
@@ -50,8 +50,18 @@ TRANSCODE_ROOT.mkdir(parents=True, exist_ok=True)
 MEDIA_ROOT = Path(os.getenv("ARCTIC_MEDIA_ROOT", "")).expanduser()
 STREAM_AUDIENCE = "stream-segment"
 
-# Windows process priority hint for ffmpeg to keep UI responsive and allow multiple streams
-_WIN_BELOW_NORMAL = 0x00004000 if os.name == 'nt' else 0
+# Windows subprocess helpers
+def _get_windows_startupinfo():
+    """Get Windows STARTUPINFO to hide console window."""
+    if os.name == "nt":
+        startupinfo = subprocess.STARTUPINFO()
+        startupinfo.dwFlags = subprocess.STARTF_USESHOWWINDOW
+        startupinfo.wShowWindow = subprocess.SW_HIDE
+        return startupinfo
+    return None
+
+# Windows process flags: BELOW_NORMAL_PRIORITY_CLASS (0x00004000) + CREATE_NO_WINDOW (0x08000000)
+_WIN_BELOW_NORMAL = (0x00004000 | 0x08000000) if os.name == 'nt' else 0
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Job registry
@@ -118,14 +128,16 @@ async def ensure_segment_auth(request: Request) -> None:
     if tok:
         with contextlib.suppress(Exception):
             p = decode_token(tok)
-            if p.get("aud") == STREAM_AUDIENCE:
+            if p and p.get("aud") == STREAM_AUDIENCE:
                 return
+            log.warning(f"ensure_segment_auth: token aud mismatch or decode failed. tok={tok[:20]}... aud={p.get('aud') if p else 'None'} vs {STREAM_AUDIENCE}")
     cookie = request.cookies.get(ACCESS_COOKIE)
     if cookie:
         with contextlib.suppress(Exception):
             p = decode_token(cookie)
-            if p.get("typ") == "access":
+            if p and p.get("typ") == "access":
                 return
+            log.warning(f"ensure_segment_auth: cookie typ mismatch or decode failed. typ={p.get('typ') if p else 'None'}")
     raise HTTPException(401, "Unauthorized for segment")
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -202,10 +214,47 @@ async def get_or_create_job(item_id: str, container: str, vcodec: str, acodec: s
 # ──────────────────────────────────────────────────────────────────────────────
 # ffmpeg
 # ──────────────────────────────────────────────────────────────────────────────
+def _ff_bin_from_appdata(name: str) -> str:
+    """Check for FFmpeg/FFprobe in %APPDATA%\\ArcticMedia\\ffmpeg on Windows."""
+    if os.name == "nt":
+        appdata = os.environ.get("APPDATA") or os.path.expanduser("~")
+        ffmpeg_dir = os.path.join(appdata, "ArcticMedia", "ffmpeg")
+        exe_name = name + ".exe"
+        exe_path = os.path.join(ffmpeg_dir, exe_name)
+        if os.path.exists(exe_path):
+            return exe_path
+    return ""
+
 def _first_nonempty(*vals: Optional[str]) -> str:
     for v in vals:
         if v:
             return v
+    return ""
+
+def _ff_bin_from_vendor(name: str) -> str:
+    """Check for FFmpeg/FFprobe in various vendor locations relative to project root."""
+    try:
+        # Potential root locations
+        bases = [
+            Path.cwd(),
+            Path.cwd().parent,
+            Path(__file__).parent.parent.parent,  # app/../..
+        ]
+        
+        exe_name = name + (".exe" if os.name == 'nt' else "")
+        
+        for base in bases:
+            # Check vendor/ffmpeg/ffmpeg.exe
+            p = base / "vendor" / "ffmpeg" / exe_name
+            if p.exists():
+                return str(p.resolve())
+            
+            # Check just vendor/ffmpeg.exe
+            p = base / "vendor" / exe_name
+            if p.exists():
+                return str(p.resolve())
+    except Exception:
+        pass
     return ""
 
 def _ff_bin_from_bundle(name: str) -> str:
@@ -227,56 +276,58 @@ def _ff_bin_from_bundle(name: str) -> str:
     return ""
 
 def ffmpeg_exe() -> str:
-    # Precedence: env/settings -> bundled -> PATH fallback
-    result = _first_nonempty(
+    # Precedence: env/settings -> APPDATA -> vendor -> bundled -> PATH fallback
+    candidates = [
         os.getenv("FFMPEG_BIN"),
         os.getenv("FFMPEG_PATH"),
         getattr(settings, "FFMPEG_PATH", None),
+        _ff_bin_from_appdata("ffmpeg"),
+        _ff_bin_from_vendor("ffmpeg"),
         _ff_bin_from_bundle("ffmpeg"),
-    ) or "ffmpeg"
-    # If result is not absolute and we're frozen, verify it exists
-    if getattr(sys, "frozen", False) and not os.path.isabs(result):
-        # Try to resolve relative paths in frozen context
-        if getattr(sys, "_MEIPASS", None):
-            # Try both with and without .exe extension
-            for name in [result, result + ".exe"] if not result.endswith(".exe") else [result]:
-                meipass_path = os.path.join(sys._MEIPASS, name)  # type: ignore
-                if os.path.exists(meipass_path):
-                    return meipass_path
-        exe_dir = os.path.dirname(sys.executable)
-        # Try both with and without .exe extension
-        for name in [result, result + ".exe"] if not result.endswith(".exe") else [result]:
-            exe_dir_path = os.path.join(exe_dir, name)
-            if os.path.exists(exe_dir_path):
-                return exe_dir_path
-    return result
+        "ffmpeg"
+    ]
+    
+    for cmd in candidates:
+        if not cmd:
+            continue
+        # If it's an absolute path, verify existence
+        if os.path.isabs(cmd):
+            if os.path.exists(cmd):
+                return cmd
+        else:
+            # If it's a command name or relative path, check PATH
+            resolved = shutil.which(cmd)
+            if resolved:
+                return resolved
+                
+    return "ffmpeg"
 
 def ffprobe_exe() -> str:
     # allow either FFPROBE_BIN or FFPROBE_PATH env overrides; also support settings
-    result = _first_nonempty(
+    candidates = [
         os.getenv("FFPROBE_BIN"),
         os.getenv("FFPROBE_PATH"),
         getattr(settings, "FFPROBE_PATH", None),
+        _ff_bin_from_appdata("ffprobe"),
+        _ff_bin_from_vendor("ffprobe"),
         _ff_bin_from_bundle("ffprobe"),
-    ) or "ffprobe"
-    # If result is not absolute and we're frozen, verify it exists
-    if getattr(sys, "frozen", False) and not os.path.isabs(result):
-        # Try to resolve relative paths in frozen context
-        if getattr(sys, "_MEIPASS", None):
-            # Try both with and without .exe extension
-            for name in [result, result + ".exe"] if not result.endswith(".exe") else [result]:
-                meipass_path = os.path.join(sys._MEIPASS, name)  # type: ignore
-                if os.path.exists(meipass_path):
-                    return meipass_path
-        exe_dir = os.path.dirname(sys.executable)
-        # Try both with and without .exe extension
-        for name in [result, result + ".exe"] if not result.endswith(".exe") else [result]:
-            exe_dir_path = os.path.join(exe_dir, name)
-            if os.path.exists(exe_dir_path):
-                return exe_dir_path
-    return result
+        "ffprobe"
+    ]
+    
+    for cmd in candidates:
+        if not cmd:
+            continue
+        if os.path.isabs(cmd):
+            if os.path.exists(cmd):
+                return cmd
+        else:
+            resolved = shutil.which(cmd)
+            if resolved:
+                return resolved
 
-def _pick_audio_map_for_path(src_path: Path, preferred_lang: Optional[str] = None, forced_idx: Optional[int] = None) -> str:
+    return "ffprobe"
+
+async def _pick_audio_map_for_path(src_path: Path, preferred_lang: Optional[str] = None, forced_idx: Optional[int] = None) -> str:
     """Return an ffmpeg -map selector for the best audio stream.
 
     Prefers language tags 'eng'/'en' when present; otherwise picks the first
@@ -290,7 +341,16 @@ def _pick_audio_map_for_path(src_path: Path, preferred_lang: Optional[str] = Non
             "-select_streams", "a",
             "-of", "json", str(src_path)
         ]
-        res = subprocess.run(probe_cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=5)
+        res = await to_thread.run_sync(
+            lambda: subprocess.run(
+                probe_cmd, 
+                stdout=subprocess.PIPE, 
+                stderr=subprocess.DEVNULL, 
+                timeout=5,
+                creationflags=_WIN_BELOW_NORMAL if os.name == 'nt' else 0,
+                startupinfo=_get_windows_startupinfo(),
+            )
+        )
         data = json.loads((res.stdout or b"").decode() or "{}")
         streams = data.get("streams", [])
         if forced_idx is not None and streams:
@@ -384,7 +444,7 @@ def _env_int(name: str, default: int) -> int:
     except Exception:
         return default
 
-def _h264_encoder_args(gop: int, seg_dur: float) -> list[str]:
+async def _h264_encoder_args(gop: int, seg_dur: float) -> list[str]:
     """Choose encoder args based on optional hardware flags.
 
     Env:
@@ -394,7 +454,7 @@ def _h264_encoder_args(gop: int, seg_dur: float) -> list[str]:
       - FFMPEG_THREADS: thread count (cpu), default 2
       - NVENC_* tuning vars optional
     """
-    hw = (os.getenv("FFMPEG_HW", "") or "").lower() or _auto_hw()
+    hw = (os.getenv("FFMPEG_HW", "") or "").lower() or await _auto_hw()
     if hw == "nvenc":
         return [
             "-c:v", "h264_nvenc",
@@ -440,14 +500,23 @@ def _h264_encoder_args(gop: int, seg_dur: float) -> list[str]:
 
 _AUTO_HW_CACHE: Optional[str] = None
 
-def _auto_hw() -> str:
+async def _auto_hw() -> str:
     global _AUTO_HW_CACHE
     if _AUTO_HW_CACHE is not None:
         return _AUTO_HW_CACHE
     # Probe ffmpeg encoders quickly; if unavailable or fails, fall back to cpu
     try:
         import subprocess
-        proc = subprocess.run([ffmpeg_exe(), "-hide_banner", "-encoders"], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=2)
+        proc = await to_thread.run_sync(
+            lambda: subprocess.run(
+                [ffmpeg_exe(), "-hide_banner", "-encoders"], 
+                stdout=subprocess.PIPE, 
+                stderr=subprocess.DEVNULL, 
+                timeout=2,
+                creationflags=_WIN_BELOW_NORMAL if os.name == 'nt' else 0,
+                startupinfo=_get_windows_startupinfo(),
+            )
+        )
         out = (proc.stdout or b"").decode(errors="ignore").lower()
         if "h264_nvenc" in out:
             _AUTO_HW_CACHE = "nvenc"
@@ -503,7 +572,9 @@ async def start_or_warm_job(src_path: Path, job: TranscodeJob) -> None:
                 "-show_entries", "stream=codec_name", "-of", "csv=p=0", str(src_path)
             ]
             proc = await asyncio.create_subprocess_exec(
-                *probe_cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+                *probe_cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+                creationflags=_WIN_BELOW_NORMAL if os.name == 'nt' else 0,
+                startupinfo=_get_windows_startupinfo(),
             )
             stdout, _ = await proc.communicate()
             codec_name = stdout.decode().strip().lower()
@@ -519,7 +590,7 @@ async def start_or_warm_job(src_path: Path, job: TranscodeJob) -> None:
         except Exception as e:
             log.warning(f"Could not detect video codec, proceeding with {vcodec}: {e}")
 
-    a_map = job.a_map or _pick_audio_map_for_path(src_path)
+    a_map = job.a_map or await _pick_audio_map_for_path(src_path)
 
     base = [
         ffmpeg_exe(), "-hide_banner", "-nostdin", "-y",
@@ -534,7 +605,7 @@ async def start_or_warm_job(src_path: Path, job: TranscodeJob) -> None:
 
     # Use H.264 for maximum browser compatibility
     if vcodec == "h264":
-        vpart = _h264_encoder_args(job.gop, job.seg_dur)
+        vpart = await _h264_encoder_args(job.gop, job.seg_dur)
         # optional scaling
         if job.v_height and int(job.v_height) > 0:
             vpart = ["-vf", f"scale=-2:{int(job.v_height)}", *vpart]
@@ -604,6 +675,7 @@ async def start_or_warm_job(src_path: Path, job: TranscodeJob) -> None:
         stderr=asyncio.subprocess.STDOUT if lf else asyncio.subprocess.DEVNULL,
         cwd=str(job.workdir),
         creationflags=_WIN_BELOW_NORMAL,
+        startupinfo=_get_windows_startupinfo(),
     )
 
     # If remux fails instantly, fall back to h264 encode
@@ -633,6 +705,7 @@ async def start_or_warm_job(src_path: Path, job: TranscodeJob) -> None:
             cwd=str(job.workdir),
             env=env,
             creationflags=_WIN_BELOW_NORMAL,
+            startupinfo=_get_windows_startupinfo(),
         )
         await asyncio.sleep(0.5)
 
@@ -683,7 +756,9 @@ async def debug_file_info(
             "-of", "json", str(src_path)
         ]
         proc = await asyncio.create_subprocess_exec(
-            *probe_cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+            *probe_cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+            creationflags=_WIN_BELOW_NORMAL if os.name == 'nt' else 0,
+            startupinfo=_get_windows_startupinfo(),
         )
         stdout, _ = await proc.communicate()
         import json
@@ -742,7 +817,11 @@ async def direct_file_head(item_id: str, request: Request, db: AsyncSession = De
                         "-select_streams", "v:0,a:0",
                         "-of", "json", str(src_path)
                     ]
-                    proc = await asyncio.create_subprocess_exec(*probe_cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+                    proc = await asyncio.create_subprocess_exec(
+                        *probe_cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+                        creationflags=_WIN_BELOW_NORMAL if os.name == 'nt' else 0,
+                        startupinfo=_get_windows_startupinfo(),
+                    )
                     out, err = await proc.communicate()
                     if proc.returncode != 0:
                         log.warning(f"Direct serving: ffprobe failed rc={proc.returncode} stderr={err.decode(errors='ignore')}")
@@ -808,7 +887,9 @@ async def direct_file_serve(
                         "-select_streams", "v:0,a:0",
                         "-of", "json", str(src_path)
                     ]
-                    proc = await asyncio.create_subprocess_exec(*probe_cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+                    proc = await asyncio.create_subprocess_exec(*probe_cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+                        creationflags=_WIN_BELOW_NORMAL if os.name == 'nt' else 0,
+                        startupinfo=_get_windows_startupinfo())
                     out, err = await proc.communicate()
                     if proc.returncode != 0:
                         log.warning(f"Direct GET: ffprobe failed rc={proc.returncode} stderr={err.decode(errors='ignore')}")
@@ -926,7 +1007,9 @@ async def start_progressive_job(src_path: Path, job: TranscodeJob) -> None:
             "-show_entries", "stream=codec_name", "-of", "csv=p=0", str(src_path)
         ]
         proc = await asyncio.create_subprocess_exec(
-            *probe_cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+            *probe_cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+            creationflags=_WIN_BELOW_NORMAL if os.name == 'nt' else 0,
+            startupinfo=_get_windows_startupinfo()
         )
         stdout, _ = await proc.communicate()
         codec_name = stdout.decode().strip().lower()
@@ -940,11 +1023,12 @@ async def start_progressive_job(src_path: Path, job: TranscodeJob) -> None:
         force_transcode = True  # Default to transcode if we can't detect
 
     if force_transcode:
-        vpart = _h264_encoder_args(72, 72 / 24.0)
+        vpart = await _h264_encoder_args(72, 72 / 24.0)
+        a_map_val = job.a_map or await _pick_audio_map_for_path(src_path)
         cmd = [
             ffmpeg_exe(), "-hide_banner", "-nostdin", "-y",
             "-i", str(src_path),
-            "-map", "0:v:0", "-map", (job.a_map or _pick_audio_map_for_path(src_path)), "-map", "-0:s", "-dn", "-sn",
+            "-map", "0:v:0", "-map", a_map_val, "-map", "-0:s", "-dn", "-sn",
             *vpart,
             "-sc_threshold", "0",
             "-c:a", "aac",
@@ -957,10 +1041,11 @@ async def start_progressive_job(src_path: Path, job: TranscodeJob) -> None:
         ]
     else:
         # Try remux first for compatible sources
+        a_map_val = job.a_map or await _pick_audio_map_for_path(src_path)
         cmd = [
             ffmpeg_exe(), "-hide_banner", "-nostdin", "-y",
             "-i", str(src_path),
-            "-map", "0:v:0", "-map", (job.a_map or _pick_audio_map_for_path(src_path)), "-map", "-0:s", "-dn", "-sn",
+            "-map", "0:v:0", "-map", a_map_val, "-map", "-0:s", "-dn", "-sn",
             "-c:v", "copy",
             "-c:a", "aac",
             "-ac", "2",
@@ -985,6 +1070,7 @@ async def start_progressive_job(src_path: Path, job: TranscodeJob) -> None:
         stderr=asyncio.subprocess.STDOUT if lf else asyncio.subprocess.DEVNULL,
         cwd=str(job.workdir),
         creationflags=_WIN_BELOW_NORMAL,
+        startupinfo=_get_windows_startupinfo(),
     )
 
     if job.proc.returncode is not None:
@@ -1161,7 +1247,9 @@ async def hls_master(
                         "-of", "json", str(src_path)
                     ]
                     proc = await asyncio.create_subprocess_exec(
-                        *probe_cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+                        *probe_cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+                        creationflags=_WIN_BELOW_NORMAL if os.name == 'nt' else 0,
+                        startupinfo=_get_windows_startupinfo(),
                     )
                     out, _ = await proc.communicate()
                     import json
@@ -1194,7 +1282,7 @@ async def hls_master(
         # Compute explicit a_map if override provided
         a_map_override = None
         if aidx is not None or (alang and alang.strip()):
-            a_map_override = _pick_audio_map_for_path(src_path, preferred_lang=(alang or None), forced_idx=aidx)
+            a_map_override = await _pick_audio_map_for_path(src_path, preferred_lang=(alang or None), forced_idx=aidx)
         job = await get_or_create_job(item.id, container, vcodec, acodec, vbitrate, _vh, a_map=a_map_override)
         await start_or_warm_job(src_path, job)
 
@@ -1240,14 +1328,24 @@ async def hls_master(
     return Response(manifest, media_type="application/vnd.apple.mpegurl", headers=headers)
 
 @router.get("/{item_id}/hls/{job_id}/init.mp4")
-async def hls_init_segment(item_id: str, job_id: str, request: Request, token: Optional[str] = Query(None)):
+async def hls_init_segment(item_id: str, job_id: str, request: Request, token: Optional[str] = Query(None, alias="t")):
     # Verify token if provided (for mobile app)
     if token:
         try:
             payload = decode_token(token)
-            if not payload or payload.get("typ") != "access":
+            if not payload:
+                log.warning(f"hls_init_segment 401: decode_token failed for token starting with {token[:15]}")
                 raise HTTPException(status_code=401, detail="Invalid token")
-        except Exception:
+            # Accept if it's a valid access token OR a specific stream-segment token
+            valid_access = payload and payload.get("typ") == "access"
+            valid_segment = payload and payload.get("aud") == STREAM_AUDIENCE
+            if not (valid_access or valid_segment):
+                log.warning(f"hls_init_segment 401: scope mismatch. typ={payload.get('typ')}, aud={payload.get('aud')}")
+                raise HTTPException(status_code=401, detail="Invalid token")
+        except HTTPException:
+            raise
+        except Exception as e:
+            log.warning(f"hls_init_segment 401: unexpected error: {e}")
             raise HTTPException(status_code=401, detail="Invalid token")
     else:
         await ensure_segment_auth(request)
@@ -1263,14 +1361,24 @@ async def hls_init_segment(item_id: str, job_id: str, request: Request, token: O
     return FileResponse(p, media_type="video/mp4", headers={"Cache-Control": "no-store"})
 
 @router.get("/{item_id}/hls/{job_id}/{segment}")
-async def hls_segment(item_id: str, job_id: str, segment: str, request: Request, token: Optional[str] = Query(None)):
+async def hls_segment(item_id: str, job_id: str, segment: str, request: Request, token: Optional[str] = Query(None, alias="t")):
     # Verify token if provided (for mobile app)
     if token:
         try:
             payload = decode_token(token)
-            if not payload or payload.get("typ") != "access":
+            if not payload:
+                log.warning(f"hls_segment 401: decode_token failed")
                 raise HTTPException(status_code=401, detail="Invalid token")
-        except Exception:
+            # Accept if it's a valid access token OR a specific stream-segment token
+            valid_access = payload and payload.get("typ") == "access"
+            valid_segment = payload and payload.get("aud") == STREAM_AUDIENCE
+            if not (valid_access or valid_segment):
+                log.warning(f"hls_segment 401: scope mismatch. typ={payload.get('typ')}, aud={payload.get('aud')}")
+                raise HTTPException(status_code=401, detail="Invalid token")
+        except HTTPException:
+            raise
+        except Exception as e:
+            log.warning(f"hls_segment 401: unexpected error: {e}")
             raise HTTPException(status_code=401, detail="Invalid token")
     else:
         await ensure_segment_auth(request)

@@ -1,0 +1,49 @@
+<component name="SettingsScene" extends="Group">
+    <script type="text/brightscript" uri="pkg:/source/api.brs" />
+    <interface>
+        <field id="server_url" type="string" />
+        <field id="auth_token" type="string" />
+        <field id="logout_triggered" type="bool" />
+        <field id="wasClosed" type="bool" />
+    </interface>
+    <children>
+        <Rectangle 
+            id="bg" 
+            width="1920" 
+            height="1080" 
+            color="#222222" 
+            opacity="0.95"
+            translation="[0,0]"
+        />
+        
+        <!-- Centered Container -->
+        <Group translation="[710, 300]">
+            <Label 
+                text="Settings"
+                font="font:LargeBoldSystemFont"
+                color="#FFFFFF"
+                horizAlign="left"
+            />
+            
+            <Label 
+                id="serverInfo"
+                text=""
+                translation="[0, 60]"
+                font="font:SmallSystemFont"
+                color="#666666"
+            />
+            
+            <LayoutGroup 
+                id="menuList"
+                translation="[0, 120]"
+                layoutDirection="vert"
+                itemSpacings="[10]"
+            >
+                <MenuButton id="btnRefresh" text="Refresh Library" />
+                <MenuButton id="btnLogout" text="Logout" />
+                <MenuButton id="btnClose" text="Close" />
+            </LayoutGroup>
+        </Group>
+    </children>
+    <script type="text/brightscript" uri="pkg:/components/SettingsScene.brs" />
+</component>

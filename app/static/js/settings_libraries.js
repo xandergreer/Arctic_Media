@@ -431,7 +431,7 @@ document.addEventListener('DOMContentLoaded', () => {
             btn.disabled = true; btn.textContent = 'Refreshing…'; btn.setAttribute('aria-busy', 'true');
             try {
                 // queue background metadata refresh job and poll
-                const rq = await fetch(`/libraries/${id}/refresh_metadata?background=true&only_missing=true`, { method: 'POST', credentials: 'same-origin' });
+                const rq = await fetch(`/libraries/${id}/refresh_metadata?background=true&force=true&only_missing=false`, { method: 'POST', credentials: 'same-origin' });
                 const jr = await rq.json().catch(() => ({}));
                 if (rq.ok && jr?.queued && jr?.job_id) {
                     const jobId = jr.job_id;
@@ -466,7 +466,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     poll();
                 } else {
                     // fallback to synchronous refresh
-                    const r = await fetch(`/libraries/${id}/refresh_metadata?only_missing=true`, { method: 'POST', credentials: 'same-origin' });
+                    const r = await fetch(`/libraries/${id}/refresh_metadata?force=true&only_missing=false`, { method: 'POST', credentials: 'same-origin' });
                     const data = await r.json().catch(() => ({}));
                     if (!r.ok) throw new Error('Metadata refresh failed');
                     const stats = data?.stats || {};

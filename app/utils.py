@@ -22,6 +22,10 @@ except Exception:
     # Fallback for PyInstaller-relative import when package context differs
     from app.config import settings  # type: ignore
 
+def hash_token(token: str) -> str:
+    """Hash a token for storage (similar to password hashing)."""
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
 # =======================
 # Password utilities
 # =======================
@@ -94,9 +98,12 @@ def decode_token(token: str) -> Optional[dict[str, Any]]:
     if not token:
         return None
     try:
-        data = jwt.decode(token, settings.SECRET_KEY, algorithms=[ALGO])
+        # Disable strict audience verification as we handle it manually in specific routes
+        data = jwt.decode(token, settings.SECRET_KEY, algorithms=[ALGO], options={"verify_aud": False})
         return data  # type: ignore[return-value]
-    except JWTError:
+    except JWTError as e:
+        # Use simple print as fallback if logging isn't fully configured in PyInstaller environment
+        print(f"[JWT][DEBUG] decode_token failed. error='{e}' key_hash='{hash_token(settings.SECRET_KEY)[:12]}' token_trimmed='{token[:15]}...' ALGO='{ALGO}'")
         return None
 
 # =======================
@@ -294,49 +301,79 @@ def _clean_show_title_enhanced(title: str) -> str:
     if not title:
         return ""
     
-    # Start with the original title
+    # --- Enhanced Cleaning Logic ---
+    
+    # 1. Normalized basic cleanup
     cleaned = title.strip()
+    # Replace common separators with spaces to make regex matching easier
+    cleaned = re.sub(r'[\._\-\[\](){}+]', ' ', cleaned)
     
-    # Remove file extension patterns first
-    cleaned = re.sub(r'\.(mkv|mp4|avi|mov|wmv|mpg|mpeg|m4v)$', '', cleaned, flags=re.I)
+    # 2. Remove file extensions (handling spaced extensions too)
+    cleaned = re.sub(r'\s+(mkv|mp4|avi|mov|wmv|mpg|mpeg|m4v)$', '', cleaned, flags=re.I)
+
+    # 3. Define Aggressive Wipeout Patterns
+    # These matches (and everything after them if they start a junk train) should be removed.
     
-    # Remove quality indicators
-    cleaned = _QUALITY_PATTERNS.sub('', cleaned)
+    junk_patterns = [
+        # Resolution
+        r'\b(2160p|1080p|720p|480p|4k|8k|uhd|hd|sd)\b',
+        
+        # Codecs (handling spaces like H 264)
+        r'\b(x\s*26[45]|h\s*\.?\s*26[45]|hevc|avc|av1|vp9|vc1)\b',
+        
+        # Sources
+        r'\b(web\s*[-]?\s*dl|web\s*rip|web|hdtv|hd\s*rip|dvd\s*rip|bd\s*rip|br\s*rip|bluray|blu\s*ray|remux|sdr|hdr|dv|dovi|dl|rip)\b',
+        
+        # Audio (handling spaces like DDP 5 1)
+        r'\b(aac\s*\d*\.?\d*|ac3|eac3|dd\s*[p+]?\s*\d*\s*\.?\s*\d*|dts\s*(-?hd)?|ma|truehd|atmos|flac|mp3)\b',
+        
+        # Bitrate / Color
+        r'\b(10\s*bit|8\s*bit|hi10p)\b',
+        
+        # Streaming Services
+        r'\b(dsnp|amzn|hulu|nf|atvp|max|pcok|hmax|sst)\b',
+        
+        # Release Groups (Aggressive list based on user logs)
+        r'\b(successfulcrab|bae|megusta|ntb|flux|ethel|lazycunts|bioma|kings|darq|hone|phoenix|badkat|elite|dooky|playweb|epsilon|batv|syncopy|demand|sigma|qoq|mixed|spweb)\b',
+        
+        # Other Scene tags
+        r'\b(repack|proper|internal|extended|director|cut|unrated|mult[i]?|dual)\b'
+    ]
     
-    # Remove codec information
-    cleaned = _CODEC_PATTERNS.sub('', cleaned)
-    
-    # Remove source information
-    cleaned = _SOURCE_PATTERNS.sub('', cleaned)
-    
-    # Remove audio information
-    cleaned = _AUDIO_PATTERNS.sub('', cleaned)
-    
-    # Remove release group tags
-    cleaned = _GROUP_PATTERNS.sub('', cleaned)
-    
-    # Remove years from titles (shows can be identified without years)
-    cleaned = _YEAR_IN_TITLE.sub('', cleaned)
-    
-    # Remove season/episode information
-    cleaned = _SEASON_RANGE.sub('', cleaned)
-    cleaned = re.sub(r'(?i)\bS\d{1,2}E\d{1,3}\b', '', cleaned)
-    cleaned = re.sub(r'(?i)\b\d{1,2}x\d{1,3}\b', '', cleaned)
-    
-    # Replace separators with spaces
-    cleaned = re.sub(r'[\._\-\[\](){}]+', ' ', cleaned)
-    
-    # Clean up multiple spaces and trim
+    # Apply regexes
+    flags = re.IGNORECASE
+    for pat in junk_patterns:
+        cleaned = re.sub(pat, ' ', cleaned, flags=flags)
+
+    # 4. Remove Season/Episode IDs if they remain (e.g. S01E01)
+    cleaned = re.sub(r'\bS\d{1,2}E\d{1,3}\b', '', cleaned, flags=flags)
+    cleaned = re.sub(r'\b\d{1,2}x\d{1,3}\b', '', cleaned, flags=flags)
+
+    # 5. Remove 'Season X' or 'Episode X' leftovers
+    cleaned = re.sub(r'\b(season|episode)\s*\d+\b', '', cleaned, flags=flags)
+
+    # 6. Remove common prefixes/suffixes
+    cleaned = re.sub(r'^(tv\s+|shows?\s+)', '', cleaned, flags=flags)
+    cleaned = re.sub(r'\s+(tv|shows?)$', '', cleaned, flags=flags)
+
+    # 7. Collapse spaces and trim
     cleaned = re.sub(r'\s+', ' ', cleaned).strip()
     
-    # Remove common prefixes/suffixes
-    cleaned = re.sub(r'^(tv\s+|shows?\s+)', '', cleaned, flags=re.I)
-    cleaned = re.sub(r'\s+(tv|shows?)$', '', cleaned, flags=re.I)
-    
-    # Final cleanup
-    cleaned = cleaned.strip(' .-_')
-    
-    return cleaned
+    # 8. Aggressive trailing digit wipe (e.g. "Title 1")
+    # Only if title length > 1 (keep "24" or "911" but remove "Title S01")
+    # But wait, "Toy Story 3"? We assume Show Episodes don't usually end in single digits unless it's part of the name.
+    # However, junk like "1" from "DL 1" is worse.
+    # We will remove trailing single digits if they are standalone
+    cleaned = re.sub(r'\s+\d$', '', cleaned)
+
+    # 8. Check if result is just the show name (duplicate prevention)
+    # This is hard without knowing the show name, but we can rely on metadata enrichment 
+    # to handle "empty" titles by fetching from TMDB.
+    # If the title is just special chars or digits, wipe it.
+    if re.fullmatch(r'[^a-zA-Z]*', cleaned):
+        return ""
+
+    return cleaned.strip(' .-_')
 
 def parse_tv_parts(rel_root: str, path: str):
     """

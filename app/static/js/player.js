@@ -106,9 +106,9 @@
             if (fmt === '12h') {
                 const h12 = (h24 % 12) || 12;
                 const ampm = h24 >= 12 ? 'PM' : 'AM';
-                text = `${String(h12).padStart(2,'0')}:${minutes} ${ampm}`;
+                text = `${String(h12).padStart(2, '0')}:${minutes} ${ampm}`;
             } else {
-                text = `${String(h24).padStart(2,'0')}:${minutes}`;
+                text = `${String(h24).padStart(2, '0')}:${minutes}`;
             }
             timeDisplay.textContent = text;
         }
@@ -292,10 +292,16 @@
     }
 
     // ── high level
-    async function playItem(fileId, title = "") {
+    async function playItem(fileId, title = "", activeItemId = null) {
         const video = $("#plyr") || $("video");
         const npTitle = $("#npTitle");
         if (!video || !fileId) return;
+
+        // Update video dataset so subsequent internal calls (like quality switch) use the correct ID
+        if (activeItemId) {
+            video.setAttribute("data-item-id", activeItemId);
+            video.dataset.itemId = activeItemId;
+        }
 
         if (npTitle) npTitle.textContent = title || "";
 
@@ -308,7 +314,7 @@
 
         const direct = `/stream/${encodeURIComponent(fileId)}/file`;  // Fastest - direct file (Range)
         // Use the itemId for HLS endpoints; this avoids mismatches with fileId-only routes
-        const itemId = (video.dataset && (video.dataset.itemId || video.getAttribute("data-item-id"))) || "";
+        const itemId = activeItemId || (video.dataset && (video.dataset.itemId || video.getAttribute("data-item-id"))) || "";
         currentFileId = fileId; currentItemId = itemId || null;
         const qq = currentQuality > 0 ? `&vcodec=h264&vh=${currentQuality}` : '';
         const m3u8 = itemId
@@ -381,13 +387,17 @@
         const playBtn = $("#playBtn");
         playBtn?.addEventListener("click", () => {
             const id = playBtn.dataset.fileId || playBtn.getAttribute("data-file-id");
+            const itemId = playBtn.dataset.itemId || playBtn.getAttribute("data-item-id");
             const title = playBtn.dataset.title || "";
-            if (id) playItem(id, title);
+            if (id) playItem(id, title, itemId);
         });
 
         $$(".ep-card[data-file-id]").forEach(btn => {
             btn.addEventListener("click", () => {
-                playItem(btn.getAttribute("data-file-id"), btn.getAttribute("data-title") || "");
+                const fid = btn.getAttribute("data-file-id");
+                const iid = btn.getAttribute("data-item-id");
+                const tit = btn.getAttribute("data-title") || "";
+                playItem(fid, tit, iid);
             });
         });
 
@@ -411,8 +421,9 @@
         // auto-boot if the <video> carries a file id
         const v = $("#plyr") || $("video");
         const bootId = v?.dataset?.fileId || v?.getAttribute?.("data-file-id");
+        const bootItemId = v?.dataset?.itemId || v?.getAttribute?.("data-item-id");
         const bootTitle = v?.dataset?.title || "";
-        if (bootId) playItem(bootId, bootTitle);
+        if (bootId) playItem(bootId, bootTitle, bootItemId);
     }
 
     document.addEventListener("DOMContentLoaded", () => {

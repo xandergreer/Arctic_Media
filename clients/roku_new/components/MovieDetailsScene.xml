@@ -1,0 +1,102 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<component name="MovieDetailsScene" extends="Group">
+    <script type="text/brightscript" uri="pkg:/source/api.brs" />
+    <interface>
+        <field id="movie_id" type="string" />
+        <field id="server_url" type="string" />
+        <field id="auth_token" type="string" />
+        <field id="wasClosed" type="bool" value="false" />
+    </interface>
+    <children>
+        <!-- Background -->
+        <Rectangle 
+            id="bg" 
+            width="1920" 
+            height="1080" 
+            color="#0a0a0a" 
+        />
+
+        <!-- Backdrop Image (Dimmed) -->
+        <Poster 
+            id="backdrop"
+            width="1920"
+            height="1080"
+            opacity="0.3"
+            loadDisplayMode="scaleToFit"
+        />
+
+        <!-- Content Container -->
+        <LayoutGroup 
+            translation="[100, 100]"
+            layoutDirection="horiz"
+            itemSpacings="[50]"
+        >
+            <!-- Poster -->
+            <Poster 
+                id="poster"
+                width="300"
+                height="450"
+                loadDisplayMode="scaleToFit"
+            />
+
+            <!-- Details -->
+            <LayoutGroup 
+                layoutDirection="vert"
+                itemSpacings="[20]"
+            >
+                <!-- Title -->
+                <Label 
+                    id="title"
+                    font="font:LargeBoldSystemFont"
+                    color="#FFFFFF"
+                    width="1400"
+                />
+
+                <!-- Year / Runtime -->
+                <Label 
+                    id="metadata"
+                    font="font:MediumSystemFont"
+                    color="#AAAAAA"
+                    width="1400"
+                />
+
+                <!-- Overview -->
+                <Label 
+                    id="overview"
+                    font="font:MediumSystemFont"
+                    color="#DDDDDD"
+                    width="1400"
+                    wrap="true"
+                />
+
+                <!-- Play Button -->
+                <Button 
+                    id="playButton"
+                    text="▶ Play"
+                    minWidth="200"
+                    showFocusFootprint="true"
+                />
+            </LayoutGroup>
+        </LayoutGroup>
+
+        <!-- Loading Label -->
+        <Label 
+            id="loadingLabel"
+            text="Loading..."
+            translation="[860, 500]"
+            font="font:LargeBoldSystemFont"
+            color="#FFFFFF"
+        />
+
+        <!-- Simple Video Player -->
+        <Video 
+            id="videoPlayer" 
+            width="1920" 
+            height="1080"
+            visible="false"
+            enableUI="true"
+        />
+    </children>
+    
+    <script type="text/brightscript" uri="pkg:/components/MovieDetailsScene.brs" />
+</component>

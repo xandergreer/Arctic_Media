@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component name="PairingScene" extends="Scene">
+  <interface>
+     <field id="pairing_finished" type="bool" value="false" />
+  </interface>
+  <script type="text/brightscript" uri="pkg:/source/pairing.brs" />
+  <children>
+    <Rectangle id="background" width="1920" height="1080" color="0x101010FF" />
+    
+    <!-- Header -->
+    <Label id="title" translation="[0,100]" text="Arctic Media Paring" width="1920" horizAlign="center" color="0xFFFFFFFF" font="font:LargeBoldSystemFont" />
+
+    <!-- Pairing Code Display (Initially Hidden) -->
+    <Group id="pairingGroup" visible="false">
+        <Label id="message" translation="[0,300]" text="Getting code..." width="1920" horizAlign="center" color="0xFFFFFFFF" font="font:MediumSystemFont" />
+        <Label id="code" translation="[0,400]" text="---- ----" width="1920" horizAlign="center" color="0x00FF00FF" font="font:ExtraLargeBoldSystemFont" />
+        <Label id="hint" translation="[0,550]" text="" width="1920" horizAlign="center" color="0xAAAAAAFF" font="font:SmallSystemFont" />
+    </Group>
+
+    <!-- Manual Server Entry (Default View) -->
+    <!-- Manual Server Entry (Default View) -->
+    <Group id="manualEntryGroup" visible="true">
+        <Label translation="[0,200]" text="Connect to Arctic Media Server" width="1920" horizAlign="center" color="0xFFFFFFFF" font="font:LargeBoldSystemFont" />
+        
+        <Label id="ipInputDisplay" translation="[0,350]" text="https://arcticmedia.space" width="1920" horizAlign="center" color="0x00AAFFFF" font="font:MediumBoldSystemFont" />
+        <Label id="errorLabel" translation="[0,400]" text="" width="1920" horizAlign="center" color="0xFF0000FF" font="font:SmallBoldSystemFont" />
+        
+        <LayoutGroup 
+            translation="[660, 500]" 
+            layoutDirection="vert" 
+            horizAlignment="center" 
+            vertAlignment="center"
+            itemSpacings="[20]"
+        >
+            <Button id="btnEdit" text="Edit Server Address" minWidth="600" showFocusFootprint="true" />
+            <Button id="connectButton" text="Connect" minWidth="600" showFocusFootprint="true" />
+        </LayoutGroup>
+        
+        <Label translation="[0,950]" text="Tip: Press PLAY (*) to connect immediately" width="1920" horizAlign="center" color="0x888888FF" font="font:SmallSystemFont" />
+    </Group>
+  </children>
+</component>

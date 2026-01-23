@@ -140,6 +140,7 @@ async def scan_movie_library(
     library_name: str,
     library_type: str,
     library_id: str,
+    force: bool = False,
     progress_cb: Optional[Callable[[int, int], Awaitable[None]]] = None,
 ) -> dict:
     """
@@ -161,7 +162,7 @@ async def scan_movie_library(
 
     processed = 0
     for path in all_paths:
-        if path in existing_paths:
+        if path in existing_paths and not force:
             skipped += 1
             processed += 1
             if progress_cb and processed % 50 == 0:
@@ -186,16 +187,32 @@ async def scan_movie_library(
             skipped += 1
             continue
 
-        mf = MediaFile(media_item_id=movie.id, path=os.path.normpath(path))
-        session.add(mf)
-        try:
-            await session.flush()
-            existing_paths.add(os.path.normpath(path))
-            added += 1
-            log.info("added movie: %s  -> %s (%s)", path, title, year)
-        except IntegrityError:
-            await session.rollback()
-            skipped += 1
+        # Try to find existing MediaFile or create new
+        if path in existing_paths:
+            # We are in force mode (otherwise we would have continued above)
+            res = await session.execute(select(MediaFile).where(MediaFile.path == os.path.normpath(path)))
+            mf = res.scalar_one_or_none()
+            if mf:
+                if mf.media_item_id != movie.id:
+                    mf.media_item_id = movie.id
+                    updated += 1
+            else:
+                # Should not happen if in existing_paths, but for safety:
+                mf = MediaFile(media_item_id=movie.id, path=os.path.normpath(path))
+                session.add(mf)
+                added += 1
+        else:
+            mf = MediaFile(media_item_id=movie.id, path=os.path.normpath(path))
+            session.add(mf)
+            try:
+                await session.flush()
+                existing_paths.add(os.path.normpath(path))
+                added += 1
+                log.info("added movie: %s  -> %s (%s)", path, title, year)
+            except IntegrityError:
+                await session.rollback()
+                skipped += 1
+                continue
 
         # Probe codecs/dimensions and persist into MediaFile for faster future playback decisions
         try:
@@ -233,7 +250,7 @@ async def scan_movie_library(
     )
 
     # Enrich with TMDB and write poster/backdrop through to columns
-    await enrich_library(session, settings.TMDB_API_KEY, library_id, limit=5000)
+    await enrich_library(session, settings.TMDB_API_KEY, library_id, limit=5000, force=force)
     await session.commit()
 
     return {
@@ -254,6 +271,7 @@ async def scan_tv_library(
     library_name: str,
     library_type: str,
     library_id: str,
+    force: bool = False,
     progress_cb: Optional[Callable[[int, int], Awaitable[None]]] = None,
 ) -> dict:
     """
@@ -282,9 +300,9 @@ async def scan_tv_library(
     for path in all_paths:
         # Debug the first few path comparisons
         if processed < 3:
-            log.info("TV PATH CHECK: path='%s', in_existing=%s", path, path in existing_paths)
+            log.info("TV PATH CHECK: path='%s', in_existing=%s, force=%s", path, path in existing_paths, force)
         
-        if path in existing_paths:
+        if path in existing_paths and not force:
             skipped += 1
             processed += 1
             if progress_cb and processed % 50 == 0:
@@ -344,17 +362,32 @@ async def scan_tv_library(
             skipped += 1
             continue
 
-        # file
-        mf = MediaFile(media_item_id=episode.id, path=os.path.normpath(path))
-        session.add(mf)
-        try:
-            await session.flush()
-            existing_paths.add(os.path.normpath(path))
-            added += 1
-            log.info("added episode: %s -> %s / %s / %s", path, show_title, season_title, ep_title)
-        except IntegrityError:
-            await session.rollback()
-            skipped += 1
+        # Try to find existing MediaFile or create new
+        if path in existing_paths:
+            # We are in force mode (otherwise we would have continued above)
+            res = await session.execute(select(MediaFile).where(MediaFile.path == os.path.normpath(path)))
+            mf = res.scalar_one_or_none()
+            if mf:
+                if mf.media_item_id != episode.id:
+                    mf.media_item_id = episode.id
+                    updated += 1
+            else:
+                # Should not happen if in existing_paths
+                mf = MediaFile(media_item_id=episode.id, path=os.path.normpath(path))
+                session.add(mf)
+                added += 1
+        else:
+            mf = MediaFile(media_item_id=episode.id, path=os.path.normpath(path))
+            session.add(mf)
+            try:
+                await session.flush()
+                existing_paths.add(os.path.normpath(path))
+                added += 1
+                log.info("added episode: %s -> %s / %s / %s", path, show_title, season_title, ep_title)
+            except IntegrityError:
+                await session.rollback()
+                skipped += 1
+                continue
 
         # Probe codecs/dimensions and persist into MediaFile for faster future playback decisions
         try:
@@ -391,7 +424,7 @@ async def scan_tv_library(
     )
 
     # Enrich show/episode metadata and stills
-    await enrich_library(session, settings.TMDB_API_KEY, library_id, limit=5000)
+    await enrich_library(session, settings.TMDB_API_KEY, library_id, limit=5000, force=force)
     await session.commit()
 
     return {
@@ -475,6 +508,7 @@ def scan_movie_library_sync(
     library_name: str,
     library_type: str,
     library_id: str,
+    force: bool = False,
     progress_cb: Optional[Callable[[int, int], Awaitable[None]]] = None,
 ) -> dict:
     """Synchronous version of scan_movie_library for background threads."""
@@ -509,7 +543,7 @@ def scan_movie_library_sync(
     processed = 0
     skipped_no_parse = 0
     for path in all_paths:
-        if path in existing_paths:
+        if path in existing_paths and not force:
             skipped += 1
             processed += 1
             continue
@@ -534,21 +568,42 @@ def scan_movie_library_sync(
             skipped += 1
             continue
 
-        mf = MediaFile(media_item_id=movie.id, path=os.path.normpath(path))
-        session.add(mf)
-        try:
-            session.flush()
-            existing_paths.add(os.path.normpath(path))
-            added += 1
-            log.info("added movie: %s  -> %s (%s)", path, title, year)
-        except IntegrityError:
-            session.rollback()
-            skipped += 1
+        # Try to find existing MediaFile or create new
+        if path in existing_paths:
+            # We are in force mode (otherwise we would have continued above)
+            from sqlalchemy import select
+            res = session.execute(select(MediaFile).where(MediaFile.path == os.path.normpath(path)))
+            mf = res.scalar_one_or_none()
+            if mf:
+                if mf.media_item_id != movie.id:
+                    mf.media_item_id = movie.id
+                    updated += 1
+            else:
+                mf = MediaFile(media_item_id=movie.id, path=os.path.normpath(path))
+                session.add(mf)
+                added += 1
+        else:
+            mf = MediaFile(media_item_id=movie.id, path=os.path.normpath(path))
+            session.add(mf)
+            try:
+                session.flush()
+                existing_paths.add(os.path.normpath(path))
+                added += 1
+                log.info("added movie: %s  -> %s (%s)", path, title, year)
+            except IntegrityError:
+                session.rollback()
+                skipped += 1
+                continue
 
         if (added + updated) % 200 == 0:
             session.commit()
         processed += 1
 
+    session.commit()
+
+    # Enrich with TMDB
+    from .metadata import enrich_library_sync
+    enrich_library_sync(session, settings.TMDB_API_KEY, library_id, limit=5000, force=force)
     session.commit()
 
     log.info(
@@ -574,6 +629,7 @@ def scan_tv_library_sync(
     library_name: str,
     library_type: str,
     library_id: str,
+    force: bool = False,
     progress_cb: Optional[Callable[[int, int], Awaitable[None]]] = None,
 ) -> dict:
     """Synchronous version of scan_tv_library for background threads."""
@@ -608,7 +664,7 @@ def scan_tv_library_sync(
     processed = 0
     skipped_no_parse = 0
     for path in all_paths:
-        if path in existing_paths:
+        if path in existing_paths and not force:
             skipped += 1
             processed += 1
             continue
@@ -659,22 +715,50 @@ def scan_tv_library_sync(
             skipped += 1
             continue
 
-        # file
-        mf = MediaFile(media_item_id=episode.id, path=os.path.normpath(path))
-        session.add(mf)
-        try:
-            session.flush()
-            existing_paths.add(os.path.normpath(path))
-            added += 1
-            log.info("added episode: %s -> %s / %s / %s", path, show_title, season_title, ep_title)
-        except IntegrityError:
-            session.rollback()
-            skipped += 1
+        # FIX: Ensure metadata (season/episode numbers) are saved so enrichment works
+        ej = dict(episode.extra_json or {})
+        if "season" not in ej:
+            ej["season"] = int(season_no)
+            ej["episode"] = int(episode_no)
+            episode.extra_json = ej
+            session.add(episode)
+
+        # Try to find existing MediaFile or create new 
+        if path in existing_paths:
+            # We are in force mode
+            from sqlalchemy import select
+            res = session.execute(select(MediaFile).where(MediaFile.path == os.path.normpath(path)))
+            mf = res.scalar_one_or_none()
+            if mf:
+                if mf.media_item_id != episode.id:
+                    mf.media_item_id = episode.id
+                    updated += 1
+            else:
+                mf = MediaFile(media_item_id=episode.id, path=os.path.normpath(path))
+                session.add(mf)
+                added += 1
+        else:
+            mf = MediaFile(media_item_id=episode.id, path=os.path.normpath(path))
+            session.add(mf)
+            try:
+                session.flush()
+                existing_paths.add(os.path.normpath(path))
+                added += 1
+                log.info("added episode: %s -> %s / %s / %s", path, show_title, season_title, ep_title)
+            except IntegrityError:
+                session.rollback()
+                skipped += 1
+                continue
 
         if (added + updated) % 200 == 0:
             session.commit()
         processed += 1
 
+    session.commit()
+
+    # Enrich with TMDB
+    from .metadata import enrich_library_sync
+    enrich_library_sync(session, settings.TMDB_API_KEY, library_id, limit=5000, force=force)
     session.commit()
 
     log.info(

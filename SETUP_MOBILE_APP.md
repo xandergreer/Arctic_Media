@@ -12,7 +12,7 @@ This guide will help you set up the Arctic Media React Native mobile app for Fir
 
 ### 1. Update Server Configuration
 
-Edit `src/config.ts` and update the server IP address:
+Edit `IOS/src/config.ts` and update the server IP address:
 
 ```typescript
 export const CONFIG = {
@@ -71,7 +71,7 @@ The APK will be created at: `android/app/build/outputs/apk/release/app-release.a
 ## Troubleshooting
 
 ### Connection Issues
-- Verify your server IP address in `src/config.ts`
+- Verify your server IP address in `IOS/src/config.ts`
 - Ensure your Arctic Media server is running
 - Check that your device can reach the server IP
 
@@ -86,16 +86,16 @@ The APK will be created at: `android/app/build/outputs/apk/release/app-release.a
 ## Customization
 
 ### Adding New Screens
-1. Create a new screen in `src/screens/`
-2. Add it to the navigation in `src/navigation/AppNavigator.tsx`
-3. Update the types in `src/types/index.ts`
+1. Create a new screen in `IOS/src/screens/`
+2. Add it to the navigation in `IOS/src/navigation/AppNavigator.tsx`
+3. Update the types in `IOS/src/types/index.ts`
 
 ### Styling
-- Colors and themes are defined in `src/config.ts`
+- Colors and themes are defined in `IOS/src/config.ts`
 - Use the CONFIG.THEME object for consistent styling
 
 ### API Integration
-- Add new API functions in `src/api/`
+- Add new API functions in `IOS/src/api/`
 - Follow the existing pattern for error handling and loading states
 
 ## Support

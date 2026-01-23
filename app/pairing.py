@@ -2,43 +2,77 @@
 from __future__ import annotations
 
 import secrets
-import string
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse
+from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from pydantic import BaseModel
 
-from .auth import get_current_user, ACCESS_TOKEN_EXPIRE_SECONDS, create_token, hash_password, new_csrf
-from .config import settings
+from .auth import get_current_user, ACCESS_COOKIE, ACCESS_TOKEN_EXPIRE_SECONDS
 from .database import get_db
-from .models import DevicePairing, DeviceSession, User
+from .models import User, DeviceSession
+from .utils import create_token, hash_password
+from .config import settings
 
-router = APIRouter(prefix="/pair", tags=["pairing"])
+router = APIRouter(tags=["pairing"])
 
-# User code is human-readable: 4 letters + 4 digits, e.g., "ABCD-1234"
+# Pairing expiry: 30 minutes
+PAIRING_EXPIRY_SECONDS = 1800
+
+
+async def _get_server_url_async(request: Request, db: AsyncSession) -> str:
+    """Get the server URL dynamically from settings or request."""
+    try:
+        from .models import ServerSetting
+        
+        # Load remote settings
+        row = (await db.execute(select(ServerSetting).where(ServerSetting.key == "remote"))).scalars().first()
+        remote_settings = (row.value or {}) if row else {}
+        public_base_url = remote_settings.get("public_base_url", "").strip()
+        
+        if public_base_url:
+            return public_base_url.rstrip("/")
+        
+        # Load server settings for SSL
+        server_row = (await db.execute(select(ServerSetting).where(ServerSetting.key == "server"))).scalars().first()
+        server_settings = (server_row.value or {}) if server_row else {}
+        ssl_enabled = server_settings.get("ssl_enabled", False)
+        
+        # Fallback to request URL
+        scheme = "https" if ssl_enabled else request.url.scheme
+        netloc = request.url.netloc
+        
+        return f"{scheme}://{netloc}"
+    except Exception:
+        return str(request.base_url).rstrip("/")
+
+
 def _generate_user_code() -> str:
-    letters = "".join(secrets.choice(string.ascii_uppercase) for _ in range(4))
-    digits = "".join(secrets.choice(string.digits) for _ in range(4))
-    return f"{letters}-{digits}"
+    """Generate a human-readable code like ABCD-1234."""
+    chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"  # Exclude similar chars
+    part1 = "".join(secrets.choice(chars) for _ in range(4))
+    part2 = "".join(secrets.choice(chars) for _ in range(4))
+    return f"{part1}-{part2}"
 
-# Device code is a long random secret (only known to device)
+
 def _generate_device_code() -> str:
+    """Generate a secure device code."""
     return secrets.token_urlsafe(32)
 
-# Expiry: 30 minutes (gives user plenty of time to enter code)
-PAIRING_EXPIRY_SECONDS = 1800
+
+# In-memory pairing store (for MVP; can move to DB later)
+_PAIRING_CODES: dict[str, dict] = {}
 
 
 class PairRequestOut(BaseModel):
     device_code: str
     user_code: str
     expires_in: int
-    interval: int  # polling interval in seconds
-    server_url: str  # base URL of the server (e.g., http://192.168.1.10:8085)
+    interval: int
+    server_url: str
 
 
 class PairPollIn(BaseModel):
@@ -46,181 +80,181 @@ class PairPollIn(BaseModel):
 
 
 class PairPollOut(BaseModel):
-    status: str  # "pending" or "authorized"
+    status: str  # "pending" | "authorized" | "expired"
     access_token: Optional[str] = None
     refresh_token: Optional[str] = None
     expires_in: Optional[int] = None
+    server_url: Optional[str] = None
 
 
 class PairActivateIn(BaseModel):
     user_code: str
 
 
-@router.post("/request", response_model=PairRequestOut)
+@router.post("/pair/request", response_model=PairRequestOut)
 async def pair_request(request: Request, db: AsyncSession = Depends(get_db)):
-    """Request a pairing code. Returns device_code (secret) and user_code (display to user)."""
+    """Request a pairing code for device authentication."""
     device_code = _generate_device_code()
     user_code = _generate_user_code()
+    
     expires_at = datetime.now(timezone.utc) + timedelta(seconds=PAIRING_EXPIRY_SECONDS)
-
-    # Ensure user_code is unique (unlikely collision, but check)
-    existing = (await db.execute(select(DevicePairing).where(DevicePairing.user_code == user_code))).scalars().first()
-    if existing:
-        user_code = _generate_user_code()  # Regenerate if collision
-
-    pairing = DevicePairing(
-        device_code=device_code,
-        user_code=user_code,
-        status="pending",
-        expires_at=expires_at,
-    )
-    db.add(pairing)
-    await db.commit()
-
-    # Get base URL - prefer public_base_url from settings if available
-    public_url = getattr(request.state, "public_base_url", None)
-    if public_url:
-        base_url = public_url.rstrip("/")
-    else:
-        # Fallback to request URL
-        base_url = f"{request.url.scheme}://{request.url.netloc}".rstrip("/")
-
+    
+    # Store pairing info
+    _PAIRING_CODES[device_code] = {
+        "user_code": user_code,
+        "device_code": device_code,
+        "status": "pending",
+        "expires_at": expires_at,
+        "user_id": None,
+        "activated_at": None,
+    }
+    
+    # Get server URL dynamically
+    server_url = await _get_server_url_async(request, db)
+    
     return PairRequestOut(
         device_code=device_code,
         user_code=user_code,
         expires_in=PAIRING_EXPIRY_SECONDS,
         interval=5,  # Poll every 5 seconds
-        server_url=base_url,
+        server_url=server_url,
     )
 
 
-@router.post("/poll", response_model=PairPollOut)
-async def pair_poll(payload: PairPollIn, db: AsyncSession = Depends(get_db)):
-    """Poll for authorization status. Device calls this repeatedly with device_code."""
-    try:
-        pairing = (
-            await db.execute(select(DevicePairing).where(DevicePairing.device_code == payload.device_code))
-        ).scalars().first()
-
-        if not pairing:
-            raise HTTPException(status_code=404, detail="Pairing not found")
-
-        # Check expiry (pairing.expires_at should be timezone-aware from SQLAlchemy)
-        now = datetime.now(timezone.utc)
-        expires_at = pairing.expires_at
-        # Handle potential timezone issues
+@router.post("/pair/poll", response_model=PairPollOut)
+async def pair_poll(body: PairPollIn, request: Request, db: AsyncSession = Depends(get_db)):
+    """Poll for pairing authorization status."""
+    device_code = body.device_code
+    
+    if device_code not in _PAIRING_CODES:
+        raise HTTPException(status_code=404, detail="Invalid device code")
+    
+    pairing = _PAIRING_CODES[device_code]
+    
+    # Check expiry
+    expires_at = pairing.get("expires_at")
+    if expires_at and isinstance(expires_at, datetime):
+        # Ensure timezone-aware
         if expires_at.tzinfo is None:
-            # SQLite might return naive datetime, add UTC timezone
             expires_at = expires_at.replace(tzinfo=timezone.utc)
-        elif expires_at.tzinfo != timezone.utc:
-            # Convert to UTC if different timezone
-            expires_at = expires_at.astimezone(timezone.utc)
-        
-        if expires_at < now:
-            if pairing.status == "pending":
-                pairing.status = "expired"
-                await db.commit()
+        now = datetime.now(timezone.utc)
+        if now >= expires_at:
+            # Clean up expired code
+            _PAIRING_CODES.pop(device_code, None)
             raise HTTPException(status_code=400, detail="Pairing code expired")
-
-        if pairing.status == "authorized":
-            # Create device session and tokens
-            user = (await db.execute(select(User).where(User.id == pairing.user_id))).scalars().first()
-            if not user:
-                raise HTTPException(status_code=404, detail="User not found")
-
-            # Generate refresh token (store hashed)
-            refresh_raw = secrets.token_urlsafe(32)
-            refresh_hash = hash_password(refresh_raw)  # Reuse password hashing for consistency
-            expires_at = datetime.now(timezone.utc) + timedelta(seconds=ACCESS_TOKEN_EXPIRE_SECONDS)
-
-            device = DeviceSession(
-                user_id=user.id,
-                platform="roku",
-                refresh_token_hash=refresh_hash,
-                expires_at=expires_at,
-            )
-            db.add(device)
-            await db.delete(pairing)  # Clean up pairing once used
-            await db.commit()
-
-            # Generate access token
-            access = create_token({"sub": str(user.id), "typ": "access"}, expires_in=ACCESS_TOKEN_EXPIRE_SECONDS)
-
-            return PairPollOut(
-                status="authorized",
-                access_token=access,
-                refresh_token=refresh_raw,  # Return raw only once
-                expires_in=ACCESS_TOKEN_EXPIRE_SECONDS,
-            )
-
-        return PairPollOut(status="pending")
-    except HTTPException:
-        raise
-    except Exception as e:
-        import logging
-        import traceback
-        error_msg = f"Error in pair_poll: {type(e).__name__}: {str(e)}"
-        logging.error(error_msg)
-        logging.error(traceback.format_exc())
-        raise HTTPException(status_code=500, detail=error_msg)
-
-
-@router.post("/activate")
-async def pair_activate(
-    payload: PairActivateIn,
-    request: Request,
-    db: AsyncSession = Depends(get_db),
-    user = Depends(get_current_user),
-):
-    """Activate a pairing by user_code. Requires web user to be logged in."""
-    pairing = (
-        await db.execute(select(DevicePairing).where(DevicePairing.user_code == payload.user_code))
-    ).scalars().first()
-
-    if not pairing:
-        raise HTTPException(status_code=404, detail="Invalid code")
-
-    # Check expiry with timezone handling
-    now = datetime.now(timezone.utc)
-    expires_at = pairing.expires_at
-    if expires_at.tzinfo is None:
-        expires_at = expires_at.replace(tzinfo=timezone.utc)
-    elif expires_at.tzinfo != timezone.utc:
-        expires_at = expires_at.astimezone(timezone.utc)
     
-    if expires_at < now:
-        pairing.status = "expired"
+    status = pairing.get("status", "pending")
+    server_url = await _get_server_url_async(request, db)
+    
+    if status == "authorized":
+        user_id = pairing.get("user_id")
+        if not user_id:
+            raise HTTPException(status_code=500, detail="Invalid pairing state")
+        
+        # Generate tokens
+        access_token = create_token({"typ": "access", "sub": user_id}, expires_in=ACCESS_TOKEN_EXPIRE_SECONDS)
+        
+        # Store refresh token hash in DeviceSession
+        # Use secrets for refresh token
+        refresh_token_raw = secrets.token_urlsafe(32)
+        refresh_token_hash = hash_password(refresh_token_raw)
+        expires_at = datetime.now(timezone.utc) + timedelta(seconds=ACCESS_TOKEN_EXPIRE_SECONDS)
+        
+        device_session = DeviceSession(
+            user_id=user_id,
+            refresh_token_hash=refresh_token_hash,
+            expires_at=expires_at,
+            user_agent=request.headers.get("user-agent"),
+            platform="Roku",
+        )
+        db.add(device_session)
         await db.commit()
-        raise HTTPException(status_code=400, detail="Code expired")
+        
+        # Clean up pairing code
+        _PAIRING_CODES.pop(device_code, None)
+        
+        return PairPollOut(
+            status="authorized",
+            access_token=access_token,
+            refresh_token=refresh_token_raw,
+            expires_in=ACCESS_TOKEN_EXPIRE_SECONDS,
+            server_url=server_url,
+        )
+    
+    return PairPollOut(status=status, server_url=server_url)
 
-    if pairing.status != "pending":
-        raise HTTPException(status_code=400, detail="Code already used or expired")
 
+@router.post("/pair/activate")
+async def pair_activate(body: PairActivateIn, request: Request, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
+    """Activate a pairing code (user enters code on web UI)."""
+    user_code = body.user_code.upper().replace(" ", "-")
+    
+    # Find pairing by user_code
+    pairing = None
+    device_code = None
+    for dc, p in _PAIRING_CODES.items():
+        if p.get("user_code") == user_code:
+            pairing = p
+            device_code = dc
+            break
+    
+    if not pairing:
+        raise HTTPException(status_code=404, detail="Invalid user code")
+    
+    # Check expiry
+    expires_at = pairing.get("expires_at")
+    if expires_at and isinstance(expires_at, datetime):
+        if expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=timezone.utc)
+        if datetime.now(timezone.utc) >= expires_at:
+            _PAIRING_CODES.pop(device_code, None)
+            raise HTTPException(status_code=400, detail="Pairing code expired")
+    
+    # Check if already authorized
+    if pairing.get("status") == "authorized":
+        raise HTTPException(status_code=400, detail="Code already used")
+    
     # Authorize
-    pairing.status = "authorized"
-    pairing.user_id = user.id
-    pairing.activated_at = datetime.now(timezone.utc)
-    await db.commit()
-
-    return JSONResponse({"ok": True, "message": "Device authorized"})
-
-
-@router.get("", response_class=HTMLResponse)
-async def pair_page(request: Request):
-    """Simple web page to enter the user_code."""
-    from .main import templates
+    pairing["status"] = "authorized"
+    pairing["user_id"] = user.id
+    pairing["activated_at"] = datetime.now(timezone.utc)
     
-    # Get base URL - prefer public_base_url from settings if available
-    public_url = getattr(request.state, "public_base_url", None)
-    if public_url:
-        base_url = public_url.rstrip("/")
+    return {"status": "ok", "message": "Device authorized"}
+
+
+@router.get("/pair", response_class=HTMLResponse)
+async def pair_page(request: Request, db: AsyncSession = Depends(get_db)):
+    """Web page for entering pairing code."""
+    # Import templates from main app
+    from fastapi.templating import Jinja2Templates
+    from pathlib import Path
+    import sys
+    
+    if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+        base = Path(sys._MEIPASS) / "app"
     else:
-        # Fallback to request URL
-        base_url = f"{request.url.scheme}://{request.url.netloc}".rstrip("/")
+        base = Path(__file__).parent
+    templates = Jinja2Templates(directory=str(base / "templates"))
     
-    return templates.TemplateResponse("pair.html", {
-        "request": request,
-        "server_url": base_url,
-    })
+    server_url = await _get_server_url_async(request, db)
+    
+    return templates.TemplateResponse(
+        "pair.html",
+        {"request": request, "server_url": server_url}
+    )
 
 
+# Cleanup expired codes periodically
+async def cleanup_expired_pairings():
+    """Background task to clean up expired pairing codes."""
+    now = datetime.now(timezone.utc)
+    expired = []
+    for device_code, pairing in _PAIRING_CODES.items():
+        expires_at = pairing.get("expires_at")
+        if expires_at and isinstance(expires_at, datetime):
+            if expires_at.tzinfo is None:
+                expires_at = expires_at.replace(tzinfo=timezone.utc)
+            if now >= expires_at:
+                expired.append(device_code)
+    for device_code in expired:
+        _PAIRING_CODES.pop(device_code, None)

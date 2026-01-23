@@ -1,160 +1,233 @@
-<!doctype html>
-<html>
+<!DOCTYPE html>
+<html lang="en">
+
 <head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width,initial-scale=1">
-    <title>Pair Device • Arctic Media</title>
-    <link rel="stylesheet" href="/static/css/base.css">
-    <link rel="stylesheet" href="/static/css/components.css">
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pair Device - Arctic Media</title>
     <style>
-        body { display: flex; justify-content: center; align-items: center; min-height: 100vh; }
-        .pair-box { max-width: 400px; padding: 24px; text-align: center; }
-        .code-input { font-size: 24px; font-family: monospace; letter-spacing: 4px; text-align: center; text-transform: uppercase; }
-        .hint { color: #999; margin-top: 16px; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: #0a0a0a;
+            color: #ffffff;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            margin: 0;
+            padding: 20px;
+        }
+
+        .container {
+            background: #1a1a1a;
+            border-radius: 8px;
+            padding: 40px;
+            max-width: 500px;
+            width: 100%;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+        }
+
+        h1 {
+            margin-top: 0;
+            text-align: center;
+            color: #ffffff;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 8px;
+            color: #cccccc;
+        }
+
+        input {
+            width: 100%;
+            padding: 12px;
+            background: #262626;
+            border: 1px solid #404040;
+            border-radius: 4px;
+            color: #ffffff;
+            font-size: 16px;
+            box-sizing: border-box;
+        }
+
+        input:focus {
+            outline: none;
+            border-color: #4a9eff;
+        }
+
+        button {
+            width: 100%;
+            padding: 12px;
+            background: #262626;
+            border: 1px solid #404040;
+            border-radius: 4px;
+            color: #ffffff;
+            font-size: 16px;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+
+        button:hover:not(:disabled) {
+            background: #333333;
+        }
+
+        button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .message {
+            margin-top: 20px;
+            padding: 12px;
+            border-radius: 4px;
+            text-align: center;
+        }
+
+        .message.success {
+            background: #1a4d1a;
+            color: #4caf50;
+        }
+
+        .message.error {
+            background: #4d1a1a;
+            color: #f44336;
+        }
+
+        .message.info {
+            background: #1a1a4d;
+            color: #4a9eff;
+        }
+
+        .login-prompt {
+            text-align: center;
+            margin-top: 20px;
+            padding: 20px;
+            background: #262626;
+            border-radius: 4px;
+        }
+
+        .login-prompt a {
+            color: #4a9eff;
+            text-decoration: none;
+        }
+
+        .login-prompt a:hover {
+            text-decoration: underline;
+        }
     </style>
 </head>
+
 <body>
-    <div class="pair-box">
-        <h1>Pair Roku Device</h1>
-        <p>Enter the code shown on your Roku TV:</p>
-        <div id="login-prompt" style="display: none; padding: 16px; background: #fee; border: 1px solid #faa; border-radius: 4px; margin: 16px 0;">
-            <p style="margin: 0 0 12px 0; color: #c00;">You must be logged in to authorize devices.</p>
-            <a href="/login?return_url=/pair" class="btn btn-primary">Go to Login</a>
+    <div class="container">
+        <h1>Pair Device</h1>
+        <div id="login-prompt" class="login-prompt" style="display: none;">
+            <p>You must be logged in to pair a device.</p>
+            <a href="/login?return_url=/pair">Log in</a>
         </div>
-        <div id="server-info" style="margin: 16px 0; padding: 12px; background: #f5f5f5; border-radius: 4px; font-size: 14px;">
-            <strong>Server:</strong> <span id="server-url-display">{{ server_url }}</span>
+        <div id="pair-form">
+            <div class="form-group">
+                <label for="user-code">Enter the code displayed on your device:</label>
+                <input type="text" id="user-code" placeholder="ABCD-1234" maxlength="9" autocomplete="off">
+            </div>
+            <button id="authorize-btn">Authorize Device</button>
+            <div id="message"></div>
         </div>
-        <form id="pair-form" style="margin-top: 24px; display: block;">
-            <input type="text" id="code" class="input code-input" placeholder="ABCD-1234" maxlength="9" pattern="[A-Z]{4}-[0-9]{4}" required>
-            <button type="submit" id="auth-button" class="btn btn-primary" style="margin-top: 16px; width: 100%;">Authorize</button>
-        </form>
-        <p id="msg" class="hint"></p>
     </div>
-    <script nonce="{{ request.state.csp_nonce }}">
-        console.log('Pair page loaded');
-        
-        const form = document.getElementById('pair-form');
-        const codeInp = document.getElementById('code');
-        const msg = document.getElementById('msg');
-        const loginPrompt = document.getElementById('login-prompt');
-        
-        // Check if user is logged in
-        fetch('/auth/me', { credentials: 'same-origin' })
-            .then(r => {
-                console.log('Auth check response:', r.status);
-                if (r.ok) {
-                    return r.json();
-                } else {
-                    throw new Error('Not logged in');
-                }
-            })
-            .then((user) => {
-                console.log('User is logged in:', user.username);
-                // User is logged in, hide prompt and show form
-                loginPrompt.style.display = 'none';
-                form.style.display = 'block';
-            })
-            .catch((err) => {
-                console.log('User not logged in:', err);
-                // User not logged in, show prompt and hide form
-                loginPrompt.style.display = 'block';
-                form.style.display = 'none';
-                msg.textContent = 'You must be logged in to authorize devices.';
-                msg.style.color = '#f00';
-            });
-        
-        codeInp.addEventListener('input', (e) => {
-            let v = e.target.value.toUpperCase().replace(/[^A-Z0-9-]/g, '');
-            if (v.length >= 4 && !v.includes('-')) {
-                v = v.slice(0, 4) + '-' + v.slice(4);
+
+    <script nonce="{{ request.state.csp_nonce if request.state.csp_nonce else '' }}">
+        // Format code input (ABCD-1234)
+        const codeInput = document.getElementById('user-code');
+        const authBtn = document.getElementById('authorize-btn');
+
+        authBtn.addEventListener('click', authorizeDevice);
+
+        codeInput.addEventListener('input', function (e) {
+            let value = e.target.value.replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
+            if (value.length > 4) {
+                value = value.slice(0, 4) + '-' + value.slice(4, 8);
             }
-            e.target.value = v.slice(0, 9);
+            e.target.value = value;
         });
 
-        // Make sure form exists before adding listener
-        if (!form) {
-            console.error('Form element not found!');
-            msg.textContent = 'Error: Form not found. Please refresh the page.';
-            msg.style.color = '#f00';
-        } else {
-            console.log('Form found, adding submit listener');
-        }
-        
-        form.addEventListener('submit', async (e) => {
-            e.preventDefault();
-            console.log('=== FORM SUBMITTED ===');
-            const code = codeInp.value.trim().toUpperCase();
-            console.log('Code entered:', code);
-            if (!/^[A-Z]{4}-[0-9]{4}$/.test(code)) {
-                msg.textContent = 'Invalid code format (use ABCD-1234)';
-                msg.style.color = '#f00';
-                return;
-            }
-            msg.textContent = 'Authorizing...';
-            msg.style.color = '#999';
-            const button = document.getElementById('auth-button') || form.querySelector('button');
-            if (!button) {
-                console.error('Button not found!');
-                msg.textContent = 'Error: Submit button not found.';
-                msg.style.color = '#f00';
-                return;
-            }
-            button.disabled = true;
-            button.textContent = 'Authorizing...';
-            
+        // Check login status
+        async function checkLogin() {
             try {
-                console.log('Sending request to /pair/activate with code:', code);
-                const r = await fetch('/pair/activate', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    credentials: 'same-origin',
-                    body: JSON.stringify({ user_code: code }),
-                });
-                console.log('Response status:', r.status, r.statusText);
-                console.log('Response headers:', Object.fromEntries(r.headers.entries()));
-                
-                let data = {};
-                try {
-                    const text = await r.text();
-                    console.log('Response text:', text);
-                    if (text) {
-                        data = JSON.parse(text);
-                    }
-                } catch (parseErr) {
-                    console.error('Failed to parse JSON:', parseErr);
-                    data = { detail: 'Failed to parse response' };
-                }
-                
-                if (r.ok) {
-                    msg.textContent = 'Device authorized! You can close this page.';
-                    msg.style.color = '#0a0';
-                    codeInp.disabled = true;
-                    button.disabled = true;
-                    button.textContent = 'Authorized';
+                const response = await fetch('/auth/me');
+                if (response.ok) {
+                    document.getElementById('login-prompt').style.display = 'none';
+                    document.getElementById('pair-form').style.display = 'block';
                 } else {
-                    msg.style.color = '#f00';
-                    if (r.status === 401) {
-                        msg.textContent = 'You must be logged in. Please log in first, then try again.';
-                    } else if (r.status === 404) {
-                        msg.textContent = 'Invalid code. Please check the code and try again.';
-                    } else if (r.status === 400) {
-                        msg.textContent = data.detail || 'Invalid request. Code may be expired or already used.';
-                    } else {
-                        msg.textContent = data.detail || `Authorization failed (${r.status})`;
-                    }
-                    console.error('Activation error:', r.status, data);
-                    button.disabled = false;
-                    button.textContent = 'Authorize';
+                    document.getElementById('login-prompt').style.display = 'block';
+                    document.getElementById('pair-form').style.display = 'none';
                 }
-            } catch (err) {
-                msg.style.color = '#f00';
-                msg.textContent = 'Network error: ' + (err.message || 'Unknown error');
-                console.error('Network error:', err);
-                button.disabled = false;
-                button.textContent = 'Authorize';
+            } catch (error) {
+                console.error('Auth check failed:', error);
+                document.getElementById('login-prompt').style.display = 'block';
+                document.getElementById('pair-form').style.display = 'none';
             }
-        });
+        }
+
+        async function authorizeDevice() {
+            const codeInput = document.getElementById('user-code');
+            const btn = document.getElementById('authorize-btn');
+            const messageDiv = document.getElementById('message');
+
+            const code = codeInput.value.trim().toUpperCase();
+            if (!code || code.length < 9) {
+                showMessage('Please enter a valid code (ABCD-1234)', 'error');
+                return;
+            }
+
+            btn.disabled = true;
+            messageDiv.innerHTML = '';
+
+            try {
+                const response = await fetch('/pair/activate', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ user_code: code })
+                });
+
+                const data = await response.json();
+
+                if (response.ok) {
+                    showMessage('Device authorized successfully!', 'success');
+                    codeInput.value = '';
+                } else {
+                    if (response.status === 401) {
+                        showMessage('You must be logged in. <a href="/login?return_url=/pair">Log in</a>', 'error');
+                    } else if (response.status === 404) {
+                        showMessage('Invalid code. Please check the code on your device.', 'error');
+                    } else if (response.status === 400) {
+                        showMessage('Code expired or already used. Please request a new code on your device.', 'error');
+                    } else {
+                        showMessage('Failed to authorize device: ' + (data.detail || 'Unknown error'), 'error');
+                    }
+                }
+            } catch (error) {
+                console.error('Authorization failed:', error);
+                alert('Connection Error: ' + error);
+                showMessage('Network error. Please check your connection and try again.', 'error');
+            } finally {
+                btn.disabled = false;
+            }
+        }
+
+        function showMessage(text, type) {
+            const messageDiv = document.getElementById('message');
+            messageDiv.className = 'message ' + type;
+            messageDiv.innerHTML = text;
+        }
+
+        // Check login on page load
+        checkLogin();
     </script>
 </body>
-</html>
 
+</html>
