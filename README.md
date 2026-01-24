@@ -1,4 +1,3 @@
-Arctic Media
 Welcome to my passion project! I made my own self-hosted media server for managing personal movie and TV show collections. It lets you stream your media to any device through a web interface or Roku app (there may be more app support in the future).
 
 Features
