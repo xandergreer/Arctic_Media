@@ -1,17 +1,25 @@
 Welcome to my passion project! I made my own self-hosted media server for managing personal movie and TV show collections. It lets you stream your media to any device through a web interface or Roku app (there may be more app support in the future).
 
 Features
+
 Web Interface - Responsive design that works on desktop and mobile.
+
 Metadata - Automatically fetches posters and details from TMDB.
+
 HLS Streaming - On-the-fly transcoding to ensure playback compatibility.
+
 Written in Python/FastAPI using SQLite.
+
 Portable - Runs as a single executable without installation.
-Roku App - Ask me about it and ill tell you how to easily sideload it onto your roku device
+
+Roku App - Ask me about it and I'll tell you how to easily sideload it onto your roku device
+
+
 
 Quick Start
 
 Download & Run
-Download articMedia.exe from the Releases page. Run the executable. Open a browser to http://localhost:8085/login.
+Download ArticMedia.exe from the Releases page. Run the executable. Open a browser to http://localhost:8085/login.
 Setup
 Create an admin account. Go to Settings > Libraries and add your movie/TV folders. Run a scan to populate your library. (scan all sometimes works but you might have to manually scan and refesh metadata if it didnt work for each folder)
 Arctic Media supports most common video formats (MP4, MKV, AVI, etc.) and subtitles (SRT, VTT).
