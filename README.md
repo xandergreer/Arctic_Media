@@ -17,7 +17,7 @@ Create an admin account. Go to Settings > Libraries and add your movie/TV folder
 Arctic Media supports most common video formats (MP4, MKV, AVI, etc.) and subtitles (SRT, VTT).
 Points to note:
 
-te server will scan the folders you give it permission to and it will automatically detect all movies and shows. Metadata is pulled from TMDB using filename matching. Errors can be fixed manually or by just entering the correct TMDB ID.
+the server will scan the folders you give it permission to and it will automatically detect all movies and shows. Metadata is pulled from TMDB using filename matching. Errors can be fixed manually or by just entering the correct TMDB ID.
 
 To access from other devices on your WiFi, use your computer's local IP: http://192.168.1.100:8085 (example)
 To access from outside your network, you need to port forward port 8085 on your router to your computer's local IP. You can then connect via your public IP address. custom domains are also supported
